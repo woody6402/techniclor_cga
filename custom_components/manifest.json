@@ -1,1 +1,11 @@
+{
+  "domain": "technicolor_cga",
+  "name": "Technicolor CGA",
+  "version": "1.0.0",
+  "documentation": "https://www.example.com",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": ["@woody6402"],
+  "config_flow": true
+}
 

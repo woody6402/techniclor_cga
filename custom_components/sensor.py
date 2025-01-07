@@ -3,8 +3,12 @@ from homeassistant.components.sensor import SensorEntity
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_HOST
 from .const import DOMAIN
 from .technicolor_cga import TechnicolorCGA
+from datetime import timedelta
+from homeassistant.helpers.event import async_track_time_interval
 
 _LOGGER = logging.getLogger(__name__)
+
+SCAN_INTERVAL = timedelta(seconds=300)  # Ändere hier den Wert
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up the Technicolor CGA sensor from a config entry."""
@@ -57,6 +61,9 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     async_add_entities(sensors, True)
     _LOGGER.debug("Technicolor CGA sensors added")
+    
+    # Rufe die async_update-Funktion im festgelegten Intervall auf
+    async_track_time_interval(hass, sensor.async_update, SCAN_INTERVAL)
 
 class TechnicolorCGASensor(SensorEntity):
     """Representation of a Technicolor CGA sensor."""

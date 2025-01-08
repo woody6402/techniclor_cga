@@ -52,8 +52,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     hass,
                     config_entry.entry_id,
                     f"Technicolor CGA DHCP {key}",
-                    key,
-                    is_dhcp=True
+                    key
                 )
             )
     except Exception as e:
@@ -68,7 +67,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 class TechnicolorCGASensor(SensorEntity):
     """Representation of a Technicolor CGA sensor."""
 
-    def __init__(self, technicolor_cga, hass, config_entry_id, name, attribute, is_dhcp=False):
+    def __init__(self, technicolor_cga, hass, config_entry_id, name, attribute):
         """Initialize the sensor."""
         self.technicolor_cga = technicolor_cga
         self.hass = hass
@@ -76,7 +75,6 @@ class TechnicolorCGASensor(SensorEntity):
         self._attr_name = name
         self._attribute = attribute
         self._state = None
-        self._is_dhcp = is_dhcp
         _LOGGER.debug(f"{name} Sensor initialized")
 
     @property
@@ -98,12 +96,8 @@ class TechnicolorCGASensor(SensorEntity):
         """Fetch new state data for the sensor."""
         _LOGGER.debug(f"Updating {self._attr_name} sensor")
         try:
-            if self._is_dhcp:
-                dhcp_data = await self.hass.async_add_executor_job(self.technicolor_cga.dhcp)
-                self._state = dhcp_data.get(self._attribute, "Unknown")
-            else:
-                system_data = await self.hass.async_add_executor_job(self.technicolor_cga.system)
-                self._state = system_data.get(self._attribute, "Unknown")
+            dhcp_data = await self.hass.async_add_executor_job(self.technicolor_cga.dhcp)
+            self._state = dhcp_data.get(self._attribute, "Unknown")
             
             _LOGGER.debug(f"{self._attr_name} sensor state updated: {self._state}")
         except Exception as e:

@@ -71,6 +71,27 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         )
     except Exception as e:
         _LOGGER.error(f"Failed to fetch host data from Technicolor CGA: {e}")
+        
+        
+    # Delta-Sensor für fehlende Geräte hinzufügen
+    try:
+        sensors.append(
+            TechnicolorCGAHostDeltaSensor(
+                technicolor_cga,
+                hass,
+                config_entry.entry_id,
+                "Technicolor CGA Missing Devices"
+            )
+        )
+    except Exception as e:
+        _LOGGER.error(f"Failed to create Delta sensor: {e}")
+
+    async_add_entities(sensors, True)
+    _LOGGER.debug("Technicolor CGA sensors added")
+
+    # Rufe die async_update-Funktion im festgelegten Intervall auf
+    for sensor in sensors:
+        async_track_time_interval(hass, sensor.async_update, SCAN_INTERVAL)    
 
     async_add_entities(sensors, True)
     _LOGGER.debug("Technicolor CGA sensors added")
@@ -160,4 +181,103 @@ class TechnicolorCGAHostSensor(TechnicolorCGABaseSensor):
             self._attributes = host_data
         except Exception as e:
             _LOGGER.error(f"Error updating {self.name}: {e}")
+            
+class TechnicolorCGAHostDeltaSensor(SensorEntity):
+    """Sensor to calculate missing or inactive devices and track known devices."""
+
+    def __init__(self, technicolor_cga, hass, config_entry_id, name):
+        """Initialize the sensor."""
+        self.technicolor_cga = technicolor_cga
+        self.hass = hass
+        self._config_entry_id = config_entry_id
+        self._attr_name = name
+        self._state = None
+        self._missing_devices = []
+        self._known_devices = {}  # Dynamisch ermittelte bekannte Geräte
+        _LOGGER.debug(f"{name} Sensor initialized")
+
+    @property
+    def unique_id(self):
+        """Return a unique ID."""
+        return f"{self._config_entry_id}_{self._attr_name.replace(' ', '_').lower()}"
+
+    @property
+    def name(self):
+        """Return the name of the sensor."""
+        return self._attr_name
+
+    @property
+    def state(self):
+        """Return the state of the sensor."""
+        return len(self._missing_devices)
+
+    @property
+    def extra_state_attributes(self):
+        """Return the state attributes of the sensor."""
+        return {
+            "missing_devices": sorted(
+                self._missing_devices, key=lambda x: self._ip_sort_key(x["last_ip"])
+            ),
+            "known_devices": sorted(
+                [
+                    {"mac": mac, "last_ip": details["ip"], "hostname": details["hostname"]}
+                    for mac, details in self._known_devices.items()
+                ],
+                key=lambda x: self._ip_sort_key(x["last_ip"]),
+            ),
+        }
+
+    def _ip_sort_key(self, ip):
+        """Convert an IP address into a tuple of integers for correct sorting."""
+        try:
+            return tuple(map(int, ip.split('.')))
+        except ValueError:
+            # Handle invalid IPs gracefully by placing them at the end
+            return (999, 999, 999, 999)
+
+    async def async_update(self):
+        """Fetch new state data for the sensor."""
+        _LOGGER.debug(f"Updating {self._attr_name} sensor")
+        try:
+            # Host-Tabelle abrufen
+            host_data = await self.hass.async_add_executor_job(self.technicolor_cga.aDev)
+            current_devices = {
+                host["physaddress"]: {
+                    "ip": host.get("ipaddress", "Unknown"),
+                    "hostname": host.get("hostname", "Unknown"),
+                    "active": host.get("active", "false"),
+                }
+                for host in host_data.get("hostTbl", [])
+            }
+
+            # Bekannte Geräte aktualisieren
+            for mac, details in current_devices.items():
+                self._known_devices[mac] = details
+
+            # Fehlende oder inaktive Geräte ermitteln
+            self._missing_devices = []
+            for mac, details in self._known_devices.items():
+                if mac not in current_devices:
+                    self._missing_devices.append(
+                        {
+                            "mac": mac,
+                            "last_ip": details["ip"],
+                            "hostname": details["hostname"],
+                            "status": "missing",
+                        }
+                    )
+                elif current_devices[mac]["active"] == "false":
+                    self._missing_devices.append(
+                        {
+                            "mac": mac,
+                            "last_ip": current_devices[mac]["ip"],
+                            "hostname": current_devices[mac]["hostname"],
+                            "status": "inactive",
+                        }
+                    )
+
+            _LOGGER.debug(f"{self._attr_name} sensor state updated: {self._missing_devices}")
+        except Exception as e:
+            _LOGGER.error(f"Error updating {self._attr_name} sensor: {e}")
+
 

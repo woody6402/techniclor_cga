@@ -2,7 +2,7 @@
   "domain": "technicolor_cga",
   "name": "Technicolor CGA",
   "version": "1.0.0",
-  "documentation": "https://www.example.com",
+  "documentation": "https://github.com/woody6402/techniclor_cga/blob/main/README.md",
   "requirements": [],
   "dependencies": [],
   "codeowners": ["@woody6402"],

@@ -1,79 +1,79 @@
-# Home Assistant: Technicolor CGA Gateway (Custom Component)
 
-Dieses Projekt stellt mehrere **Sensor-Entities** für ein Technicolor CGA‑Gateway in Home Assistant bereit. Es liest u. a. System‑ und DHCP‑Informationen aus, listet verbundene Hosts auf und bietet einen **Delta‑Sensor** zur Erkennung vermisster/inaktiver Geräte. Alle Entities werden dank `device_info` unter **einem Gerät** im Geräte‑ und Integrationsregister gebündelt.
+This project provides several **sensor entities** for a Technicolor CGA gateway in Home Assistant. It reads system and DHCP information, lists connected hosts, and offers a **delta sensor** to detect missing/inactive devices. Thanks to `device_info`, all entities are grouped under **one device** in Home Assistant's device and integrations registry.
 
 ## Features
 
-- **Systemstatus** (z. B. `CMStatus`) inkl. Durchreichen weiterer Systemattribute
-- **DHCP‑Sensoren** für alle zurückgelieferten DHCP‑Schlüssel
-- **Hostliste** mit Anzahl der aktuell erkannten Geräte (`hostTbl`)
-- **Missing‑Devices / Delta‑Sensor**: zeigt Geräte, die verschwunden oder inaktiv sind
-- **Sauberes Geräte‑Clustering** via `device_info` (Identifier = `(DOMAIN, host)`, Hersteller, Name, `configuration_url`); Modell/Firmware werden – falls verfügbar – ergänzt
-- **Automatisches Polling** alle 5 Minuten
+- **System status** (e.g., `CMStatus`) including pass-through of additional system attributes
+- **DHCP sensors** for all DHCP keys returned by the gateway
+- **Host list** with the number of currently detected devices (`hostTbl`)
+- **Missing devices / Delta sensor**: shows devices that disappeared or are inactive
+- **Clean device grouping** via `device_info` (identifiers = `(DOMAIN, host)`, manufacturer, name, `configuration_url`); model/firmware are added when available
+- **Automatic polling** every 5 minutes
 
-## Verzeichnisstruktur (Beispiel)
+## Directory structure (example)
 
 ```
 custom_components/technicolor_cga/
-├─ __init__.py
+├─ init.py
 ├─ config_flow.py
 ├─ manifest.json
 ├─ const.py
 ├─ technicolor_cga.py
-└─ sensor.py            
+└─ sensor.py
 ```
 
 ## Installation
 
-1. Diesen Ordner nach `config/custom_components/technicolor_cga/` kopieren.
-2. Home Assistant **neu starten**.
-3. **Einstellungen → Geräte & Dienste → Integration hinzufügen** und den Eintrag *Technicolor CGA* auswählen.
-4. Zugangsdaten eingeben:
-   - **Host** (z. B. `192.168.0.1`)
+1. Copy this folder to `config/custom_components/technicolor_cga/`.
+2. **Restart** Home Assistant.
+3. Go to **Settings → Devices & Services → Add Integration** and pick *Technicolor CGA*.
+4. Enter your credentials:
+   - **Host** (e.g., `192.168.0.1`)
    - **Username**
    - **Password**
 
-> Die Integration verwendet **Config Entries** (UI‑basierte Einrichtung).
+> The integration uses **Config Entries** (UI-based setup).
 
-## Angelegte Entities
+## Created entities
 
-### System‑Sensor
+### System sensor
 - **Name:** `Technicolor CGA System Status`
-- **State:** Wert von `CMStatus` (oder `"Unknown"`)
-- **Attribute:** Alle weiteren Systemfelder (z. B. `ModelName`, `SoftwareVersion` etc.).
-- **Device Info:** `model`/`sw_version` werden – sofern vorhanden – aus den Systemdaten gesetzt.
+- **State:** value of `CMStatus` (or `"Unknown"`)
+- **Attributes:** all other system fields (e.g., `ModelName`, `SoftwareVersion`, etc.).
+- **Device info:** `model`/`sw_version` are set from system data when present.
 
-### DHCP‑Sensoren
-- **Name:** `Technicolor CGA DHCP <Key>` (für jeden Schlüssel aus `dhcp()`)
-- **State:** Entspr. Wert aus den DHCP‑Daten (oder `"Unknown"`).
+### DHCP sensors
+- **Name:** `Technicolor CGA DHCP <Key>` (for each key returned by `dhcp()`)
+- **State:** corresponding value from DHCP data (or `"Unknown"`).
 
-### Host‑Sensor
+### Host sensor
 - **Name:** `Technicolor CGA Host List`
-- **State:** Anzahl der Einträge in `hostTbl`.
-- **Attribute:** Vollständige Host‑Datenstruktur (z. B. `hostTbl`, Einträge mit `physaddress`, `ipaddress`, `hostname`, `active`).
+- **State:** number of entries in `hostTbl`.
+- **Attributes:** full host data structure (e.g., `hostTbl`, entries with `physaddress`, `ipaddress`, `hostname`, `active`).
 
-### Delta‑/Missing‑Devices‑Sensor
+### Delta / Missing devices sensor
 - **Name:** `Technicolor CGA Missing Devices`
-- **State:** Anzahl der erkannten *fehlenden* oder *inaktiven* Geräte.
-- **Attribute:**
-  - `missing_devices`: Liste von Dicts `{mac, last_ip, hostname, status}`
-  - `known_devices`: Liste erkannter Geräte `{mac, last_ip, hostname}`
-- **Hinweise:**
-  - Die Liste `known_devices` wird **zur Laufzeit gelernt** (kein Persisting über Neustarts).
-  - Sortierung erfolgt numerisch nach IP; ungültige IPs landen am Ende.
+- **State:** number of detected *missing* or *inactive* devices.
+- **Attributes:**
+  - `missing_devices`: list of dicts `{mac, last_ip, hostname, status}`
+  - `known_devices`: list of learned devices `{mac, last_ip, hostname}`
+- **Notes:**
+  - The `known_devices` list is **learned at runtime** (no persistence across restarts).
+  - Sorting is numeric by IP; invalid IPs are placed at the end.
 
-## Aktualisierungsintervall
+## Update interval
 
-Standardmäßig alle **5 Minuten** (`SCAN_INTERVAL = 300s`).
+By default every **5 minutes** (`SCAN_INTERVAL = 300s`).
 
-**Tipps:**
-- Prüfe `Host`, `Username`, `Password` und ob das Web‑Interface erreichbar ist.
-- Einige Gateways liefern leicht unterschiedliche Feldnamen (`ModelName` vs. `Model`, `SoftwareVersion` vs. `SWVersion`/`FirmwareVersion`). Der Code berücksichtigt gängige Varianten.
-- Der Delta‑Sensor lernt Geräte erst, nachdem sie mindestens einmal gesehen wurden.
+## Tips / Troubleshooting
 
-## Entwicklung
+- Verify `Host`, `Username`, `Password` and that the web interface is reachable.
+- Some gateways return slightly different field names (`ModelName` vs. `Model`, `SoftwareVersion` vs. `SWVersion`/`FirmwareVersion`). The code handles common variants.
+- The delta sensor only learns devices after they have been seen at least once.
 
-- Entities erben von `SensorEntity` (Basisklasse stellt `device_info` bereit).
-- **Einzigartige IDs** basieren auf `config_entry_id` + Entity‑Name.
+## Development
+
+- Entities inherit from `SensorEntity` (the base class provides `device_info`).
+- **Unique IDs** are based on `config_entry_id` + entity name.
 - Polling via `async_track_time_interval`.
-- Die API‑Klasse `TechnicolorCGA` wird im Executor aufgerufen (`login`, `system`, `dhcp`, `aDev`).
+- The API class `TechnicolorCGA` is called in the executor (`login`, `system`, `dhcp`, `aDev`).

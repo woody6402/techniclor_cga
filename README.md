@@ -10,11 +10,10 @@ This project provides several **sensor entities** for a Technicolor CGA gateway 
 - **Clean device grouping** via `device_info` (identifiers = `(DOMAIN, host)`, manufacturer, name, `configuration_url`); model/firmware are added when available
 - **Automatic polling** every 5 minutes
 
-## Directory structure (example)
-
+## Directory structure 
 ```
-custom_components/technicolor_cga/
-├─ init.py
+custom_components/TL-WPA8630P/
+├─ __init__.py
 ├─ config_flow.py
 ├─ manifest.json
 ├─ const.py

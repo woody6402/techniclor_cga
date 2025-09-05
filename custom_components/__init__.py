@@ -25,7 +25,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
         return False
 
     hass.data[DOMAIN][entry.entry_id] = technicolor_cga
-    hass.async_create_task(hass.config_entries.async_forward_entry_setup(entry, "sensor"))
+    hass.async_create_task(hass.config_entries.async_forward_entry_setups(entry, ["sensor"]))
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry):

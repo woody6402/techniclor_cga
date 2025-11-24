@@ -12,7 +12,7 @@ This project provides several **sensor entities** for a Technicolor CGA gateway 
 
 ## Directory structure 
 ```
-custom_components/TL-WPA8630P/
+custom_components/technicolor_cga/
 ├─ __init__.py
 ├─ config_flow.py
 ├─ manifest.json

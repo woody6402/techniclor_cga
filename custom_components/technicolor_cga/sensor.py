@@ -30,6 +30,7 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
 
     entry_store = hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {})
     technicolor = entry_store.get("api")
+    
 
     if technicolor is None:
         _LOGGER.error("No API object found in hass.data for entry %s", config_entry.entry_id)
@@ -44,14 +45,14 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         system_data = {}
 
     sensors = [
-        TechnicolorCGASystemSensor(technicolor, hass, config_entry.entry_id, host, "Technicolor System", system_data),
+        TechnicolorCGASystemSensor(technicolor, hass, config_entry.entry_id, host, "System", system_data,
+          unique_suffix="system", suggested_object_id="technicolor_system"),
 
-        # DHCP-Beispiele: wähle hier die Keys, die du als einzelne Entities willst
-        #TechnicolorCGADHCPSensor(technicolor, hass, config_entry.entry_id, host, "Router IP (RT)", "IPAddressRT"),
-        #TechnicolorCGADHCPSensor(technicolor, hass, config_entry.entry_id, host, "Gateway IP", "IPAddressGW"),
-
-        TechnicolorCGAHostSensor(technicolor, hass, config_entry.entry_id, host, "Technicolor Hosts"),
-        TechnicolorCGAHostDeltaSensor(technicolor, hass, config_entry.entry_id, host, "Technicolor Missing/Inactive Hosts"),
+        TechnicolorCGAHostSensor(technicolor, hass, config_entry.entry_id, host, "Hosts",
+          unique_suffix="hosts", suggested_object_id="technicolor_hosts"),
+          
+        TechnicolorCGAHostDeltaSensor(technicolor, hass, config_entry.entry_id, host, "Missing/Inactive Hosts",
+          unique_suffix="missing_inactive_hosts", suggested_object_id="technicolor_missing_inactive_hosts"),
     ]
 
     # DHCP dynamisch (Blacklist-Ansatz)
@@ -69,8 +70,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     hass,
                     config_entry.entry_id,
                     host,
-                    f"Technicolor CGA DHCP {key}",
+                    f"CGA DHCP {key}",
                     key,
+                    unique_suffix=f"dhcp_{key.lower()}",
+                    suggested_object_id=f"technicolor_dhcp_{key.lower()}",
                 )
             )
     except Exception as err:
@@ -87,36 +90,45 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     # ✅ Timer starten und "unsubscribe" speichern (damit unload/reload sauber ist)
     unsub = async_track_time_interval(hass, _update_all, scan_interval)
 
-    # Wichtig: unsub im hass.data speichern, damit __init__.py es beim unload entfernen kann
-    entry_store = hass.data.setdefault(DOMAIN, {}).get(config_entry.entry_id)
+    # Wichtig: unsub im hass.data speichern, damit __init__.py es beim unload entfernen kann    
+    entry_store = hass.data.setdefault(DOMAIN, {}).setdefault(config_entry.entry_id, {})
     if isinstance(entry_store, dict):
         entry_store["unsub"] = unsub
-    
 
 
 
 class TechnicolorCGABaseSensor(SensorEntity):
     """Base class for Technicolor CGA sensors with device_info."""
 
-    def __init__(self, technicolor_cga, hass, config_entry_id, host, name):
+    def __init__(
+        self,
+        technicolor_cga,
+        hass,
+        config_entry_id,
+        host,
+        name,
+        *,
+        unique_suffix: str | None = None,
+        suggested_object_id: str | None = None,
+    ):
         """Initialize the sensor."""
         self.technicolor_cga = technicolor_cga
         self.hass = hass
         self._config_entry_id = config_entry_id
         self._host = host
-        self._attr_name = name
+        self._attr_has_entity_name = True
+        self._attr_name = name  # z.B. "System", "Hosts", "DHCP IPAddressGW"
+        if unique_suffix:
+            self._attr_unique_id = f"{config_entry_id}_{unique_suffix}"
+        if suggested_object_id:
+            self._attr_suggested_object_id = suggested_object_id
         self._state = None
         self._attributes = {}
-        # Optional fields that the system sensor may fill later
         self._model = None
         self._sw_version = None
-        _LOGGER.debug(f"{name} Sensor initialized (host: {host})")
+        _LOGGER.debug("%s Sensor initialized (host: %s)", name, host)
 
-    @property
-    def unique_id(self):
-        """Return a unique ID."""
-        return f"{self._config_entry_id}_{self._attr_name.replace(' ', '_').lower()}"
-
+        
     @property
     def name(self):
         """Return the name of the sensor."""
@@ -141,7 +153,7 @@ class TechnicolorCGABaseSensor(SensorEntity):
         The system sensor may enrich model and sw_version after its first fetch.
         """
         info = {
-            "identifiers": {(DOMAIN, self._host)},
+            "identifiers": {(DOMAIN, self._config_entry_id)},
             "name": "Technicolor CGA Gateway",
             "manufacturer": "Technicolor",
             "configuration_url": f"http://{self._host}/",
@@ -160,9 +172,10 @@ class TechnicolorCGABaseSensor(SensorEntity):
 class TechnicolorCGASystemSensor(TechnicolorCGABaseSensor):
     """System sensor for Technicolor CGA."""
 
-    def __init__(self, technicolor_cga, hass, config_entry_id, host, name, system_data):
-        super().__init__(technicolor_cga, hass, config_entry_id, host, name)
+    def __init__(self, technicolor_cga, hass, config_entry_id, host, name, system_data, **kwargs):
+        super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)
         self._apply_system_data(system_data)
+        
 
     def _apply_system_data(self, system_data: dict):
         self._state = system_data.get("CMStatus", "Unknown")
@@ -186,9 +199,10 @@ class TechnicolorCGASystemSensor(TechnicolorCGABaseSensor):
 class TechnicolorCGADHCPSensor(TechnicolorCGABaseSensor):
     """DHCP sensor for Technicolor CGA."""
 
-    def __init__(self, technicolor_cga, hass, config_entry_id, host, name, attribute):
-        super().__init__(technicolor_cga, hass, config_entry_id, host, name)
-        self._attribute = attribute
+
+    def __init__(self, technicolor_cga, hass, config_entry_id, host, name, attribute, **kwargs):
+        super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)
+        self._attribute = attribute        
 
     async def async_update(self):
         try:
@@ -201,8 +215,8 @@ class TechnicolorCGADHCPSensor(TechnicolorCGABaseSensor):
 class TechnicolorCGAHostSensor(TechnicolorCGABaseSensor):
     """Host sensor for Technicolor CGA."""
 
-    def __init__(self, technicolor_cga, hass, config_entry_id, host, name):
-        super().__init__(technicolor_cga, hass, config_entry_id, host, name)
+    def __init__(self, technicolor_cga, hass, config_entry_id, host, name, **kwargs):
+        super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)        
 
     async def async_update(self):
         try:
@@ -213,34 +227,13 @@ class TechnicolorCGAHostSensor(TechnicolorCGABaseSensor):
             _LOGGER.error(f"Error updating {self.name}: {e}")
 
 
-class TechnicolorCGAHostDeltaSensor(SensorEntity):
-    """Sensor to calculate missing or inactive devices and track known devices.
+class TechnicolorCGAHostDeltaSensor(TechnicolorCGABaseSensor):
+    """Sensor to calculate missing or inactive devices and track known devices."""
 
-    Not inheriting from the base class originally; we still provide device_info
-    here to group this entity under the same device in the registry.
-    """
-
-    def __init__(self, technicolor_cga, hass, config_entry_id, host, name):
-        """Initialize the sensor."""
-        self.technicolor_cga = technicolor_cga
-        self.hass = hass
-        self._config_entry_id = config_entry_id
-        self._host = host
-        self._attr_name = name
-        self._state = None
+    def __init__(self, technicolor_cga, hass, config_entry_id, host, name, **kwargs):
+        super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)
         self._missing_devices = []
         self._known_devices = {}  # dynamically learned known devices
-        _LOGGER.debug(f"{name} Sensor initialized (host: {host})")
-
-    @property
-    def unique_id(self):
-        """Return a unique ID."""
-        return f"{self._config_entry_id}_{self._attr_name.replace(' ', '_').lower()}"
-
-    @property
-    def name(self):
-        """Return the name of the sensor."""
-        return self._attr_name
 
     @property
     def state(self):
@@ -263,29 +256,17 @@ class TechnicolorCGAHostDeltaSensor(SensorEntity):
             ),
         }
 
-    @property
-    def device_info(self):
-        """Match device registry info used by the other sensors."""
-        return {
-            "identifiers": {(DOMAIN, self._host)},
-            "name": "Technicolor CGA Gateway",
-            "manufacturer": "Technicolor",
-            "configuration_url": f"http://{self._host}/",
-        }
-
     def _ip_sort_key(self, ip):
         """Convert an IP address into a tuple of integers for correct sorting."""
         try:
-            return tuple(map(int, ip.split('.')))
+            return tuple(map(int, ip.split(".")))
         except ValueError:
-            # Handle invalid IPs gracefully by placing them at the end
             return (999, 999, 999, 999)
 
     async def async_update(self):
         """Fetch new state data for the sensor."""
-        _LOGGER.debug(f"Updating {self._attr_name} sensor")
+        _LOGGER.debug("Updating %s sensor", self._attr_name)
         try:
-            # Fetch host table
             host_data = await self.hass.async_add_executor_job(self.technicolor_cga.aDev)
             current_devices = {
                 host["physaddress"]: {
@@ -296,11 +277,9 @@ class TechnicolorCGAHostDeltaSensor(SensorEntity):
                 for host in host_data.get("hostTbl", [])
             }
 
-            # Update known devices
             for mac, details in current_devices.items():
                 self._known_devices[mac] = details
 
-            # Determine missing or inactive devices
             self._missing_devices = []
             for mac, details in self._known_devices.items():
                 if mac not in current_devices:
@@ -321,7 +300,9 @@ class TechnicolorCGAHostDeltaSensor(SensorEntity):
                             "status": "inactive",
                         }
                     )
-
-            _LOGGER.debug(f"{self._attr_name} sensor state updated: {self._missing_devices}")
         except Exception as e:
-            _LOGGER.error(f"Error updating {self._attr_name} sensor: {e}")
+            _LOGGER.error("Error updating %s sensor: %s", self._attr_name, e)
+
+
+
+

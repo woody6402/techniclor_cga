@@ -1,0 +1,29 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Technicolor CGA",
+        "description": "Technicolor CGA konfigurieren",
+        "data": {
+          "username": "Benutzername",
+          "password": "Passwort",
+          "host": "Router-IP",
+          "scan_interval": "Abfrageintervall (Sekunden)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Technicolor CGA Optionen",
+        "data": {
+          "host": "Router-IP",
+          "password": "Passwort",
+          "scan_interval": "Abfrageintervall (Sekunden)"
+        }
+      }
+    }
+  }
+}
+

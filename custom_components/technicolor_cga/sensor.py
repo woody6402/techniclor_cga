@@ -5,6 +5,7 @@ from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_HOST, CONF_SC
 from homeassistant.components.sensor import SensorEntity
 
 from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
 
@@ -85,7 +86,11 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
     # ✅ EIN Update-Loop für alle Sensoren (keine doppelten Timer)
     async def _update_all(_now):
         for s in sensors:
-            await s.async_update()
+            try:
+                await s.async_update()
+            finally:
+                s.async_write_ha_state()
+
 
     # ✅ Timer starten und "unsubscribe" speichern (damit unload/reload sauber ist)
     unsub = async_track_time_interval(hass, _update_all, scan_interval)
@@ -126,6 +131,7 @@ class TechnicolorCGABaseSensor(SensorEntity):
         self._attributes = {}
         self._model = None
         self._sw_version = None
+        self._attr_should_poll = False
         _LOGGER.debug("%s Sensor initialized (host: %s)", name, host)
 
         
@@ -203,6 +209,7 @@ class TechnicolorCGADHCPSensor(TechnicolorCGABaseSensor):
     def __init__(self, technicolor_cga, hass, config_entry_id, host, name, attribute, **kwargs):
         super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)
         self._attribute = attribute        
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC        
 
     async def async_update(self):
         try:
@@ -234,6 +241,7 @@ class TechnicolorCGAHostDeltaSensor(TechnicolorCGABaseSensor):
         super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)
         self._missing_devices = []
         self._known_devices = {}  # dynamically learned known devices
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC          
 
     @property
     def state(self):

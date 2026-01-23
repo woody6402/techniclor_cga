@@ -23,6 +23,12 @@ custom_components/technicolor_cga/
 
 ## Installation
 
+> The integration uses **Config Entries** (UI-based setup).
+
+### HACS
+v0.9.1: is installable over HACS custom repo
+
+### Manual
 1. Copy this folder to `config/custom_components/technicolor_cga/`.
 2. **Restart** Home Assistant.
 3. Go to **Settings → Devices & Services → Add Integration** and pick *Technicolor CGA*.
@@ -30,8 +36,6 @@ custom_components/technicolor_cga/
    - **Host** (e.g., `192.168.0.1`)
    - **Username**
    - **Password**
-
-> The integration uses **Config Entries** (UI-based setup).
 
 ## Created entities
 

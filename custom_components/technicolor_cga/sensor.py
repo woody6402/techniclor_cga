@@ -1,58 +1,71 @@
 import logging
 from datetime import timedelta
 
+from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_HOST, CONF_SCAN_INTERVAL
 from homeassistant.components.sensor import SensorEntity
-from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_HOST
+
 from homeassistant.helpers.event import async_track_time_interval
 
 from .const import DOMAIN
-from .technicolor_cga import TechnicolorCGA
 
 _LOGGER = logging.getLogger(__name__)
-
-SCAN_INTERVAL = timedelta(seconds=300)
+DEFAULT_SCAN_SECONDS = 300
 
 
 async def async_setup_entry(hass, config_entry, async_add_entities):
-    """Set up the Technicolor CGA sensor from a config entry."""
-    _LOGGER.debug("Setting up Technicolor CGA sensor")
+    """Set up Technicolor CGA sensors from a config entry."""
 
     username = config_entry.data[CONF_USERNAME]
-    password = config_entry.data[CONF_PASSWORD]
-    host = config_entry.data[CONF_HOST]
 
-    try:
-        technicolor_cga = TechnicolorCGA(username, password, host)
-        await hass.async_add_executor_job(technicolor_cga.login)
-    except Exception as e:
-        _LOGGER.error(f"Failed to log in to Technicolor CGA: {e}")
+    # ✅ Host/Password aus options (fallback data)
+    host = config_entry.options.get(CONF_HOST, config_entry.data.get(CONF_HOST, "192.168.0.1"))
+    password = config_entry.options.get(CONF_PASSWORD, config_entry.data.get(CONF_PASSWORD, ""))
+
+    # ✅ ScanInterval aus options (fallback data / default)
+    scan_seconds = config_entry.options.get(
+        CONF_SCAN_INTERVAL,
+        config_entry.data.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_SECONDS),
+    )
+    scan_interval = timedelta(seconds=int(scan_seconds))
+
+    entry_store = hass.data.get(DOMAIN, {}).get(config_entry.entry_id, {})
+    technicolor = entry_store.get("api")
+
+    if technicolor is None:
+        _LOGGER.error("No API object found in hass.data for entry %s", config_entry.entry_id)
         return
 
-    sensors = []
 
-    # Add system sensor
+    # ✅ Initialdaten für SystemSensor (weil dein ctor system_data erwartet)
     try:
-        system_data = await hass.async_add_executor_job(technicolor_cga.system)
-        sensors.append(
-            TechnicolorCGASystemSensor(
-                technicolor_cga,
-                hass,
-                config_entry.entry_id,
-                host,
-                "Technicolor CGA System Status",
-                system_data,
-            )
-        )
-    except Exception as e:
-        _LOGGER.error(f"Failed to fetch system data from Technicolor CGA: {e}")
+        system_data = await hass.async_add_executor_job(technicolor.system)
+    except Exception as err:
+        _LOGGER.warning("Initial system fetch failed, continuing: %s", err)
+        system_data = {}
 
-    # Add DHCP sensors
+    sensors = [
+        TechnicolorCGASystemSensor(technicolor, hass, config_entry.entry_id, host, "Technicolor System", system_data),
+
+        # DHCP-Beispiele: wähle hier die Keys, die du als einzelne Entities willst
+        #TechnicolorCGADHCPSensor(technicolor, hass, config_entry.entry_id, host, "Router IP (RT)", "IPAddressRT"),
+        #TechnicolorCGADHCPSensor(technicolor, hass, config_entry.entry_id, host, "Gateway IP", "IPAddressGW"),
+
+        TechnicolorCGAHostSensor(technicolor, hass, config_entry.entry_id, host, "Technicolor Hosts"),
+        TechnicolorCGAHostDeltaSensor(technicolor, hass, config_entry.entry_id, host, "Technicolor Missing/Inactive Hosts"),
+    ]
+
+    # DHCP dynamisch (Blacklist-Ansatz)
+    notwanted: set[str] = set()  # erst mal leer lassen
+
     try:
-        dhcp_data = await hass.async_add_executor_job(technicolor_cga.dhcp)
-        for key in dhcp_data.keys():
+        dhcp_data = await hass.async_add_executor_job(technicolor.dhcp)
+        for key in sorted(dhcp_data.keys()):
+            if key in notwanted:
+                continue
+
             sensors.append(
                 TechnicolorCGADHCPSensor(
-                    technicolor_cga,
+                    technicolor,
                     hass,
                     config_entry.entry_id,
                     host,
@@ -60,48 +73,26 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
                     key,
                 )
             )
-    except Exception as e:
-        _LOGGER.error(f"Failed to fetch DHCP data from Technicolor CGA: {e}")
+    except Exception as err:
+        _LOGGER.warning("Failed to fetch DHCP data: %s", err)
 
-    # Add host sensor
-    try:
-        sensors.append(
-            TechnicolorCGAHostSensor(
-                technicolor_cga,
-                hass,
-                config_entry.entry_id,
-                host,
-                "Technicolor CGA Host List",
-            )
-        )
-    except Exception as e:
-        _LOGGER.error(f"Failed to fetch host data from Technicolor CGA: {e}")
 
-    # Delta sensor for missing devices
-    try:
-        sensors.append(
-            TechnicolorCGAHostDeltaSensor(
-                technicolor_cga,
-                hass,
-                config_entry.entry_id,
-                host,
-                "Technicolor CGA Missing Devices",
-            )
-        )
-    except Exception as e:
-        _LOGGER.error(f"Failed to create Delta sensor: {e}")
+    async_add_entities(sensors, update_before_add=True)
 
-    async_add_entities(sensors, True)
-    _LOGGER.debug("Technicolor CGA sensors added (with device_info)")
+    # ✅ EIN Update-Loop für alle Sensoren (keine doppelten Timer)
+    async def _update_all(_now):
+        for s in sensors:
+            await s.async_update()
 
-    # Call async_update at a fixed interval
-    for sensor in sensors:
-        async_track_time_interval(hass, sensor.async_update, SCAN_INTERVAL)
+    # ✅ Timer starten und "unsubscribe" speichern (damit unload/reload sauber ist)
+    unsub = async_track_time_interval(hass, _update_all, scan_interval)
 
-    # Also perform a bulk refresh on the same schedule (kept from original behavior)
-    async_track_time_interval(
-        hass, lambda _: [sensor.async_update() for sensor in sensors], SCAN_INTERVAL
-    )
+    # Wichtig: unsub im hass.data speichern, damit __init__.py es beim unload entfernen kann
+    entry_store = hass.data.setdefault(DOMAIN, {}).get(config_entry.entry_id)
+    if isinstance(entry_store, dict):
+        entry_store["unsub"] = unsub
+    
+
 
 
 class TechnicolorCGABaseSensor(SensorEntity):

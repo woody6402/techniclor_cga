@@ -138,3 +138,10 @@ python3 -m unittest discover -s tests -v
 
 These tests use a minimal Home Assistant stand-in. An HAOS runtime test is still
 needed, especially for unload/reload and a router session expiring.
+
+Login never requests a forced logout: both login POSTs explicitly use
+`logout=false`. If the router does not grant a complete challenge (for example,
+because a browser session is active), HA leaves the existing session alone.
+Initial setup retries through `ConfigEntryNotReady`; an established integration
+retries at the next polling interval. The router decides when the session is
+available again; closing a browser tab may not release it immediately.

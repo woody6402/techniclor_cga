@@ -54,27 +54,30 @@ class TechnicolorCGA:
 
         return hashlib.pbkdf2_hmac('sha256', bpass, bsalt, 1000).hex()[:32]
 
-    def _request_salt(self, logout):
+    def _request_salt(self):
         data = {
             "username": self.username,
             "password": "seeksalthash",
-            "logout": "true" if logout else "false",
+            "logout": "false",
         }
         endpoint = self.endpoint("session", ["login"])
         return self.session.post(endpoint, data=data, timeout=REQUEST_TIMEOUT).json()
 
     def login(self):
+        self.logged = False
         # Seed a session cookie (PHPSESSID) first: the modem's own web UI does
         # a GET on session/menu before logging in. Without it the salt request
         # comes back as MSG_LOGIN_150 ("already logged in") with no salt.
         self.session.get(self.endpoint("session", ["menu"]), timeout=REQUEST_TIMEOUT)
 
-        response = self._request_salt(logout=False)
-        if "salt" not in response:
-            # A previous session is still held (single-session device). Ask the
-            # modem to drop it and hand us the salt, like the web UI does when
-            # it hits MSG_LOGIN_150.
-            response = self._request_salt(logout=True)
+        response = self._request_salt()
+        if not response.get("salt") or not response.get("saltwebui"):
+            # Never evict a browser (or another client) on this single-session
+            # router. Setup/polling will retry later when access is available.
+            raise RuntimeError(
+                "Router did not grant a login challenge; session may be occupied. "
+                "Existing session left untouched; will retry later."
+            )
 
         challenge = self.challenge(self.password, response["salt"])
         challenge = self.challenge(challenge, response["saltwebui"])
@@ -82,6 +85,7 @@ class TechnicolorCGA:
         data = {
             "username": self.username,
             "password": challenge,
+            "logout": "false",
         }
 
         endpoint = self.endpoint("session", ["login"])

@@ -2,6 +2,9 @@ import requests
 import hashlib
 import time
 
+# Connect and read inactivity timeouts in seconds (not a total request deadline).
+REQUEST_TIMEOUT = (5, 15)
+
 class TechnicolorCGA:
     def __init__(self, username, password, router="192.168.0.1"):
         self.server = f"http://{router}"
@@ -32,7 +35,7 @@ class TechnicolorCGA:
         return f"{self.server}/api/v1/{target}/{opts}?_={now}"
 
     def call(self, endpoint):
-        response = self.session.get(endpoint).json()
+        response = self.session.get(endpoint, timeout=REQUEST_TIMEOUT).json()
 
         # The modem drops idle sessions (and only allows one at a time), after
         # which requests come back as {"error": "error", "message":
@@ -41,7 +44,7 @@ class TechnicolorCGA:
         # Home Assistant is restarted.
         if "data" not in response:
             self.login()
-            response = self.session.get(endpoint).json()
+            response = self.session.get(endpoint, timeout=REQUEST_TIMEOUT).json()
 
         return response["data"]
 
@@ -58,13 +61,13 @@ class TechnicolorCGA:
             "logout": "true" if logout else "false",
         }
         endpoint = self.endpoint("session", ["login"])
-        return self.session.post(endpoint, data=data).json()
+        return self.session.post(endpoint, data=data, timeout=REQUEST_TIMEOUT).json()
 
     def login(self):
         # Seed a session cookie (PHPSESSID) first: the modem's own web UI does
         # a GET on session/menu before logging in. Without it the salt request
         # comes back as MSG_LOGIN_150 ("already logged in") with no salt.
-        self.session.get(self.endpoint("session", ["menu"]))
+        self.session.get(self.endpoint("session", ["menu"]), timeout=REQUEST_TIMEOUT)
 
         response = self._request_salt(logout=False)
         if "salt" not in response:
@@ -82,13 +85,13 @@ class TechnicolorCGA:
         }
 
         endpoint = self.endpoint("session", ["login"])
-        response = self.session.post(endpoint, data=data).json()
+        response = self.session.post(endpoint, data=data, timeout=REQUEST_TIMEOUT).json()
 
         if response.get("error") == "ok":
             self.session.headers.update({'X-CSRF-TOKEN': self.session.cookies['auth']})
 
             endpoint = self.endpoint("session", ["menu"])
-            self.session.get(endpoint)
+            self.session.get(endpoint, timeout=REQUEST_TIMEOUT)
 
             self.logged = True
 
@@ -179,7 +182,7 @@ class TechnicolorCGA:
         endpoint = self.endpoint("reset", [])
 
         data = {"reboot": "Router,Wifi,VoIP,Dect,MoCA"}
-        request = self.session.post(endpoint, data=data)
+        request = self.session.post(endpoint, data=data, timeout=REQUEST_TIMEOUT)
         response = request.json()
 
         return response['error'] == 'ok'

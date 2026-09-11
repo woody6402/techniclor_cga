@@ -60,6 +60,7 @@ def make_api():
         dhcp=Mock(return_value={'IPAddressGW': '192.168.0.1', 'PoolEnable': True}),
         aDev=Mock(return_value={'hostTbl': [{'physaddress': 'aa', 'ipaddress': '192.168.0.2', 'active': 'true'}]}),
         levels=Mock(return_value={'DSTbl': [row, dict(row, LockStatus='Unlocked', PowerLevel='99 dBmV', SNRLevel='0 dB')], 'USTbl': [row], 'ErrTbl': [{'Correcteds': '3', 'Uncorrectables': '0'}]}),
+        wifi=Mock(return_value={str(i): {'RadioEnable': 'true', 'Channel': str(channel)} for i, channel in ((1, 11), (2, 100))}),
         interfaces=Mock(return_value={'WANEthernet': {'Status': 'Up'}, 'WANStats': {k: '10' for k in ('PacketsReceived','PacketsSent','BytesReceived','BytesSent','ErrorsReceived','ErrorsSent')}, 'LANEtherTable': [{'Status': 'Up'}]}),
     )
 
@@ -87,7 +88,7 @@ class PollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.api.aDev.call_count, 1)
         self.api.dhcp.side_effect = None
         await self.poller.async_refresh()
-        self.assertEqual(len(self.poller.data), 5)
+        self.assertEqual(len(self.poller.data), 6)
 
     async def test_stop_and_overlap(self):
         pending = asyncio.get_running_loop().create_future()
@@ -127,13 +128,13 @@ class PollingTests(unittest.IsolatedAsyncioTestCase):
         timer = Mock(return_value=Mock())
         with patch.object(sensor, 'async_track_time_interval', timer):
             await sensor.async_setup_entry(self.hass, entry, lambda items, **kw: entities.extend(items))
-            self.assertEqual(len(entities), 17)
+            self.assertEqual(len(entities), 19)
             self.assertTrue(entities[0]._attr_available)
             self.assertFalse(entities[1]._attr_available)
             self.api.dhcp.side_effect = None
             tick = timer.call_args.args[1]
             await tick(None)
-            self.assertEqual(len(entities), 19)
+            self.assertEqual(len(entities), 21)
             self.assertTrue(all(e._attr_available for e in entities))
             self.assertEqual(self.api.dhcp.call_count, 2)
             self.assertEqual(self.api.aDev.call_count, 1)
@@ -156,14 +157,14 @@ class PollingTests(unittest.IsolatedAsyncioTestCase):
             self.api.system.side_effect = None
             await tick(None)
             self.assertTrue(all(e._attr_available for e in entities))
-            self.assertEqual(len(entities), 19)
+            self.assertEqual(len(entities), 21)
 
     async def test_healthy_setup_fetches_each_group_once(self):
         entry = SimpleNamespace(entry_id='test', options={}, data={})
         entities = []
         with patch.object(sensor, 'async_track_time_interval', Mock(return_value=Mock())):
             await sensor.async_setup_entry(self.hass, entry, lambda items, **kw: entities.extend(items))
-        self.assertEqual(len(entities), 19)
+        self.assertEqual(len(entities), 21)
         for fn in vars(self.api).values():
             self.assertEqual(fn.call_count, 1)
         self.assertTrue(all(e._attr_available for e in entities))
@@ -173,7 +174,7 @@ class PollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(await self.poller.async_refresh())
         self.poller.resume()
         self.assertTrue(await self.poller.async_refresh())
-        self.assertEqual(len(self.poller.data), 5)
+        self.assertEqual(len(self.poller.data), 6)
 
     async def test_system_diagnostics_survive_failure_and_clear_on_recovery(self):
         system = sensor.TechnicolorCGASystemSensor(self.api, self.hass, 'test', 'router', 'System', {})
@@ -199,6 +200,33 @@ class PollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(system.extra_state_attributes['poll_status'], 'ok')
         self.assertIsNone(system.extra_state_attributes['poll_error'])
         self.assertIsNone(system.extra_state_attributes['failed_group'])
+
+    async def test_wifi_partial_failure_disabled_radio_and_recovery(self):
+        radios = []
+        for radio_id in ('1', '2'):
+            entity = sensor.TechnicolorCGAWifiSensor(
+                self.api, self.hass, 'test', 'router', 'WiFi', radio_id)
+            entity._poller = self.poller
+            radios.append(entity)
+        await self.poller.async_refresh()
+        last_success = self.poller.diagnostics['last_success']
+        self.api.wifi.return_value = {'1': {'RadioEnable': 'false', 'Channel': '11'}, '2': None}
+        await self.poller.async_refresh()
+        for entity in radios:
+            await entity.async_update()
+        self.assertEqual(radios[0].state, 'Disabled')
+        self.assertTrue(radios[0]._attr_available)
+        self.assertFalse(radios[1]._attr_available)
+        self.assertEqual(self.poller.diagnostics['failed_group'], 'wifi')
+        self.assertEqual(self.poller.diagnostics['last_success'], last_success)
+        self.assertIn('interfaces', self.poller.data)
+        self.api.wifi.return_value['2'] = {'RadioEnable': 'true', 'Channel': '100'}
+        await self.poller.async_refresh()
+        await radios[1].async_update()
+        self.assertTrue(radios[1]._attr_available)
+        self.assertEqual(radios[1].state, 'Enabled')
+        self.assertEqual(radios[1].extra_state_attributes['Channel'], '100')
+        self.assertEqual(self.poller.diagnostics['poll_status'], 'ok')
 
     async def test_invalid_response(self):
         for invalid in (None, {}, [], 'invalid'):

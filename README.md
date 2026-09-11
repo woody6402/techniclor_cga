@@ -114,7 +114,7 @@ By default every **5 minutes** (`SCAN_INTERVAL = 300s`).
 
 All sensor groups share one serial refresh every configured scan interval
 (default: 300 seconds). Each successful round fetches system, DHCP, hosts,
-DOCSIS levels and WAN/LAN interfaces once. Initial entity setup uses that same
+DOCSIS levels, WAN/LAN interfaces and WiFi radios once. Initial entity setup uses that same
 snapshot; individual entity updates only reapply the latest snapshot.
 The short API caches are bypassed for these scheduled group fetches.
 Authentication can still require additional HTTP requests.
@@ -154,3 +154,19 @@ remain available as attributes when the System sensor itself is unavailable.
 code; an incomplete challenge otherwise reports `login_failed`. Error descriptions
 are fixed text and do not include response bodies or credentials. Before the
 initial login succeeds, only the integration setup status is available.
+
+### WiFi radio sensors
+
+`WiFi 2.4 GHz` (radio 1) and `WiFi 5 GHz` (radio 2) share one additional
+GET per refresh to `/api/v1/wifi/1,2/RadioEnable,...,RegulatoryDomain`.
+This mapping and the nested per-radio response format are based on the supplied
+CGA4233EU firmware response. States are `Enabled` or `Disabled`, based on
+`RadioEnable`; these indicate radio configuration, not Internet connectivity.
+Attributes preserve the reported field names and values for channel, bandwidth,
+standards, automatic channel selection, SSID, BSSID, SSID enable/visibility,
+security mode, encryption and regulatory domain. No password fields are requested.
+
+If only one radio fails, the other remains available and System polling diagnostics
+identify an incomplete WiFi response. WiFi is fetched last, so its failure does
+not discard the other groups already fetched. No traffic counters or client
+counts are provided by this endpoint.

@@ -121,6 +121,13 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
           suggested_object_id="technicolor_lan_ports"),
     ])
 
+    for radio_id, band, suffix in (("1", "2.4 GHz", "2_4ghz"), ("2", "5 GHz", "5ghz")):
+        sensors.append(TechnicolorCGAWifiSensor(
+            technicolor, hass, config_entry.entry_id, host, f"WiFi {band}",
+            radio_id, unique_suffix=f"wifi_{suffix}",
+            suggested_object_id=f"technicolor_wifi_{suffix}",
+        ))
+
     for sensor in sensors:
         sensor._poller = poller
 
@@ -670,3 +677,32 @@ class TechnicolorCGALanPortsSensor(TechnicolorCGAInterfacesSensor):
             "ports": ports,
             "LANStats": data.get("LANStats") or {},
         }
+
+
+class TechnicolorCGAWifiSensor(TechnicolorCGABaseSensor):
+    """Enabled state of a radio, with its reported settings as attributes."""
+
+    _data_group = "wifi"
+    _attr_icon = "mdi:wifi"
+
+    def __init__(self, technicolor_cga, hass, config_entry_id, host, name, radio_id, **kwargs):
+        super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)
+        self._radio_id = radio_id
+
+    def _apply_data(self, radios):
+        data = radios.get(self._radio_id)
+        if not isinstance(data, dict):
+            raise ValueError("No data for WiFi radio")
+        enabled = str(data.get("RadioEnable", "")).strip().lower()
+        if enabled not in ("true", "false"):
+            raise ValueError("Missing or invalid RadioEnable")
+        self._state = "Enabled" if enabled == "true" else "Disabled"
+        fields = (
+            "RadioEnable", "OperatingStandards", "Channel",
+            "OperatingChannelBandwidth", "AutoChannelEnable", "SSIDEnable",
+            "SSID", "BSSID", "ModeEnabled", "EncryptionMethod",
+            "SSIDAdvertisementEnabled", "RegulatoryDomain",
+        )
+        # Preserve firmware field names/values; do not expose arbitrary fields.
+        self._attributes = {key: data[key] for key in fields if key in data}
+        self._attributes["radio_id"] = self._radio_id

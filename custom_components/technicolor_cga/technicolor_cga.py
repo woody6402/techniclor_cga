@@ -176,6 +176,39 @@ class TechnicolorCGA:
         self._iface_ts = time.time()
         return data
 
+    def wifi(self):
+        """Fetch both radios; this endpoint has one envelope per radio."""
+        fields = [
+            "RadioEnable", "OperatingStandards", "Channel",
+            "OperatingChannelBandwidth", "AutoChannelEnable", "SSIDEnable",
+            "SSID", "BSSID", "ModeEnabled", "EncryptionMethod",
+            "SSIDAdvertisementEnabled", "RegulatoryDomain",
+        ]
+        endpoint = (
+            f"{self.server}/api/v1/wifi/1,2/{','.join(fields)}"
+            f"?_={int(time.time() * 1000)}"
+        )
+        request = self.session.get(endpoint, timeout=REQUEST_TIMEOUT)
+        response = request.json()
+        if request.status_code == 401 or (
+            isinstance(response, dict) and response.get("message") == "Unauthorized!"
+        ):
+            self.login()
+            response = self.session.get(endpoint, timeout=REQUEST_TIMEOUT).json()
+        if not isinstance(response, dict):
+            raise ValueError("Invalid WiFi response")
+        radios = {}
+        for radio_id in ("1", "2"):
+            envelope = response.get(radio_id)
+            data = envelope.get("data") if isinstance(envelope, dict) else None
+            radios[radio_id] = (
+                data if isinstance(envelope, dict) and envelope.get("error") == "ok"
+                and isinstance(data, dict) and data else None
+            )
+        if not any(radios.values()):
+            raise ValueError("No WiFi radio data available")
+        return radios
+
     def dhcp(self):
         options = [
             "IPAddressRT",

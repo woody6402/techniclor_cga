@@ -33,6 +33,7 @@ class RouterPoller:
             ("hosts", api.aDev),
             ("levels", partial(api.levels, max_age=0)),
             ("interfaces", partial(api.interfaces, max_age=0)),
+            ("wifi", api.wifi),
         )
 
     async def async_refresh(self):
@@ -68,6 +69,11 @@ class RouterPoller:
                     if not isinstance(data, dict) or not data:
                         raise ValueError(f"Missing or invalid {group} data")
                     snapshot[group] = data
+                    if group == "wifi" and any(data.get(key) is None for key in ("1", "2")):
+                        self.diagnostics.update(
+                            poll_status="invalid_response", failed_group="wifi",
+                            poll_error="One or more WiFi radios returned no valid data",
+                        )
                 except Exception as err:
                     status, message = self._describe_error(err)
                     self.diagnostics.update(
@@ -79,7 +85,7 @@ class RouterPoller:
                 return False
             # Missing groups become unavailable, never reuse an old round.
             self.data = snapshot
-            if len(snapshot) == len(self._groups):
+            if len(snapshot) == len(self._groups) and self.diagnostics["poll_status"] == "updating":
                 self.diagnostics.update(
                     poll_status="ok", last_success=datetime.now(timezone.utc).isoformat(),
                 )

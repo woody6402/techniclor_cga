@@ -175,6 +175,31 @@ class PollingTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(await self.poller.async_refresh())
         self.assertEqual(len(self.poller.data), 5)
 
+    async def test_system_diagnostics_survive_failure_and_clear_on_recovery(self):
+        system = sensor.TechnicolorCGASystemSensor(self.api, self.hass, 'test', 'router', 'System', {})
+        system._poller = self.poller
+        await self.poller.async_refresh()
+        await system.async_update()
+        first_success = system.extra_state_attributes['last_success']
+        self.assertEqual(system.extra_state_attributes['poll_status'], 'ok')
+        self.assertIsNotNone(first_success)
+        self.api.system.side_effect = TimeoutError('secret token must not appear')
+        await self.poller.async_refresh()
+        await system.async_update()
+        attrs = system.extra_state_attributes
+        self.assertFalse(system._attr_available)
+        self.assertEqual(attrs['poll_status'], 'timeout')
+        self.assertEqual(attrs['failed_group'], 'system')
+        self.assertEqual(attrs['last_success'], first_success)
+        self.assertNotIn('secret', attrs['poll_error'])
+        self.api.system.side_effect = None
+        await self.poller.async_refresh()
+        await system.async_update()
+        self.assertTrue(system._attr_available)
+        self.assertEqual(system.extra_state_attributes['poll_status'], 'ok')
+        self.assertIsNone(system.extra_state_attributes['poll_error'])
+        self.assertIsNone(system.extra_state_attributes['failed_group'])
+
     async def test_invalid_response(self):
         for invalid in (None, {}, [], 'invalid'):
             self.api.system.return_value = invalid

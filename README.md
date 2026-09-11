@@ -145,3 +145,12 @@ because a browser session is active), HA leaves the existing session alone.
 Initial setup retries through `ConfigEntryNotReady`; an established integration
 retries at the next polling interval. The router decides when the session is
 available again; closing a browser tab may not release it immediately.
+
+The existing System sensor exposes polling diagnostics as attributes:
+`poll_status`, `last_attempt`, `last_success`, `failed_group`, and `poll_error`.
+Timestamps use UTC; `last_success` means a fully successful round. Diagnostics
+remain available as attributes when the System sensor itself is unavailable.
+`waiting_for_session` is only reported for the explicit `MSG_LOGIN_150` router
+code; an incomplete challenge otherwise reports `login_failed`. Error descriptions
+are fixed text and do not include response bodies or credentials. Before the
+initial login succeeds, only the integration setup status is available.

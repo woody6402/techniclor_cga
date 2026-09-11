@@ -263,6 +263,13 @@ class TechnicolorCGASystemSensor(TechnicolorCGABaseSensor):
         self._apply_system_data(system_data)
         
 
+    @property
+    def extra_state_attributes(self):
+        # Diagnostics remain visible even when the system snapshot is absent.
+        poller = getattr(self, "_poller", None)
+        diagnostics = poller.diagnostics if poller is not None else {}
+        return {**self._attributes, **diagnostics}
+
     def _apply_system_data(self, system_data: dict):
         self._state = system_data.get("CMStatus", "Unknown")
         # Pick common keys for model / firmware if available

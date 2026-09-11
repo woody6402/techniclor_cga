@@ -23,7 +23,7 @@ class LoginTests(unittest.TestCase):
     def test_busy_session_is_not_evicted_then_recovers(self):
         self.api.logged = True
         self.api.session.post.return_value = response({'message': 'MSG_LOGIN_150'})
-        with self.assertRaisesRegex(RuntimeError, 'Existing session left untouched'):
+        with self.assertRaisesRegex(api_module.RouterSessionBusy, 'Existing session left untouched'):
             self.api.login()
         self.assertFalse(self.api.logged)
         self.assertEqual(self.api.session.post.call_count, 1)
@@ -45,8 +45,9 @@ class LoginTests(unittest.TestCase):
 
     def test_incomplete_challenge_does_not_submit_password(self):
         self.api.session.post.return_value = response({'salt': 'a'})
-        with self.assertRaises(RuntimeError):
+        with self.assertRaises(api_module.RouterLoginError) as caught:
             self.api.login()
+        self.assertEqual(caught.exception.poll_status, 'login_failed')
         self.assertEqual(self.api.session.post.call_count, 1)
 
 

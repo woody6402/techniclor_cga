@@ -5,6 +5,14 @@ import time
 # Connect and read inactivity timeouts in seconds (not a total request deadline).
 REQUEST_TIMEOUT = (5, 15)
 
+class RouterLoginError(RuntimeError):
+    poll_status = "login_failed"
+
+
+class RouterSessionBusy(RouterLoginError):
+    poll_status = "waiting_for_session"
+
+
 class TechnicolorCGA:
     def __init__(self, username, password, router="192.168.0.1"):
         self.server = f"http://{router}"
@@ -74,7 +82,12 @@ class TechnicolorCGA:
         if not response.get("salt") or not response.get("saltwebui"):
             # Never evict a browser (or another client) on this single-session
             # router. Setup/polling will retry later when access is available.
-            raise RuntimeError(
+            error_type = (
+                RouterSessionBusy
+                if "MSG_LOGIN_150" in (response.get("message"), response.get("error"), response.get("code"))
+                else RouterLoginError
+            )
+            raise error_type(
                 "Router did not grant a login challenge; session may be occupied. "
                 "Existing session left untouched; will retry later."
             )
@@ -101,7 +114,7 @@ class TechnicolorCGA:
 
             return True
 
-        raise RuntimeError(f"login failed: {response.get('message', response)}")
+        raise RouterLoginError("Router rejected the login")
 
     def system(self):
         options = [

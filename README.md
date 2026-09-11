@@ -109,3 +109,32 @@ By default every **5 minutes** (`SCAN_INTERVAL = 300s`).
 - **Unique IDs** are based on `config_entry_id` + entity name.
 - Polling via `async_track_time_interval`.
 - The API class `TechnicolorCGA` is called in the executor (`login`, `system`, `dhcp`, `aDev`).
+
+### Central polling (local feature branch)
+
+All sensor groups share one serial refresh every configured scan interval
+(default: 300 seconds). Each successful round fetches system, DHCP, hosts,
+DOCSIS levels and WAN/LAN interfaces once. Initial entity setup uses that same
+snapshot; individual entity updates only reapply the latest snapshot.
+The short API caches are bypassed for these scheduled group fetches.
+Authentication can still require additional HTTP requests.
+
+A failed or invalid group response ends the round. Sensors in that group and
+all groups not yet fetched become unavailable; successfully fetched groups
+remain available. The next interval tries again. DHCP keys discovered after
+an initial failure are added without a reload.
+
+Overlapping rounds are skipped. Unloading stops the timer and waits for the
+current group call (including any login retry) to finish before releasing the
+integration. It starts no further groups. Python cannot forcibly interrupt an
+HTTP request already running in a worker thread; the HTTP timeouts still apply.
+No automatic router logout is performed.
+
+Local verification without Home Assistant or router access:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+These tests use a minimal Home Assistant stand-in. An HAOS runtime test is still
+needed, especially for unload/reload and a router session expiring.

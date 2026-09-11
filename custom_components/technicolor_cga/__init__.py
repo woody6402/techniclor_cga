@@ -41,7 +41,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # ✅ Platz für api + später unsub (Interval-Listener)
     hass.data[DOMAIN][entry.entry_id] = {"api": api, "unsub": None}
 
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    try:
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except BaseException:
+        entry_data = hass.data[DOMAIN].pop(entry.entry_id, {})
+        if entry_data.get("unsub"):
+            entry_data["unsub"]()
+        if entry_data.get("poller"):
+            await entry_data["poller"].async_stop()
+        raise
     return True
 
 
@@ -53,9 +61,15 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         entry_data["unsub"]()
         entry_data["unsub"] = None
 
+    if entry_data and entry_data.get("poller"):
+        await entry_data["poller"].async_stop()
+
     unload_ok = await hass.config_entries.async_forward_entry_unload(entry, "sensor")
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
+    elif entry_data and entry_data.get("start_polling"):
+        entry_data["poller"].resume()
+        entry_data["start_polling"]()
 
     return unload_ok
 

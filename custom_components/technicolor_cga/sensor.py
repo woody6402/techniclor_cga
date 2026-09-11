@@ -2,7 +2,7 @@ import logging
 from datetime import timedelta
 
 from homeassistant.const import (
-    CONF_USERNAME, CONF_PASSWORD, CONF_HOST, CONF_SCAN_INTERVAL, UnitOfInformation,
+    CONF_HOST, CONF_SCAN_INTERVAL, UnitOfInformation,
 )
 from homeassistant.components.sensor import SensorEntity, SensorStateClass, SensorDeviceClass
 
@@ -10,6 +10,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.entity import EntityCategory
 
 from .const import DOMAIN
+from .polling import RouterPoller
 
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_SCAN_SECONDS = 300
@@ -34,11 +35,8 @@ def _to_int(value):
 async def async_setup_entry(hass, config_entry, async_add_entities):
     """Set up Technicolor CGA sensors from a config entry."""
 
-    username = config_entry.data[CONF_USERNAME]
-
     # ✅ Host/Password aus options (fallback data)
     host = config_entry.options.get(CONF_HOST, config_entry.data.get(CONF_HOST, "192.168.0.1"))
-    password = config_entry.options.get(CONF_PASSWORD, config_entry.data.get(CONF_PASSWORD, ""))
 
     # ✅ ScanInterval aus options (fallback data / default)
     scan_seconds = config_entry.options.get(
@@ -56,12 +54,10 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         return
 
 
-    # ✅ Initialdaten für SystemSensor (weil dein ctor system_data erwartet)
-    try:
-        system_data = await hass.async_add_executor_job(technicolor.system)
-    except Exception as err:
-        _LOGGER.warning("Initial system fetch failed, continuing: %s", err)
-        system_data = {}
+    poller = RouterPoller(hass, technicolor)
+    entry_store["poller"] = poller
+    await poller.async_refresh()
+    system_data = poller.data.get("system") or {}
 
     sensors = [
         TechnicolorCGASystemSensor(technicolor, hass, config_entry.entry_id, host, "System", system_data,
@@ -73,30 +69,6 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
         TechnicolorCGAHostDeltaSensor(technicolor, hass, config_entry.entry_id, host, "Missing/Inactive Hosts",
           unique_suffix="missing_inactive_hosts", suggested_object_id="technicolor_missing_inactive_hosts"),
     ]
-
-    # DHCP dynamisch (Blacklist-Ansatz)
-    notwanted: set[str] = set()  # erst mal leer lassen
-
-    try:
-        dhcp_data = await hass.async_add_executor_job(technicolor.dhcp)
-        for key in sorted(dhcp_data.keys()):
-            if key in notwanted:
-                continue
-
-            sensors.append(
-                TechnicolorCGADHCPSensor(
-                    technicolor,
-                    hass,
-                    config_entry.entry_id,
-                    host,
-                    f"CGA DHCP {key}",
-                    key,
-                    unique_suffix=f"dhcp_{key.lower()}",
-                    suggested_object_id=f"technicolor_dhcp_{key.lower()}",
-                )
-            )
-    except Exception as err:
-        _LOGGER.warning("Failed to fetch DHCP data: %s", err)
 
     # DOCSIS RF / line-quality sensors (downstream/upstream power, SNR and
     # corrected/uncorrectable codeword counters).
@@ -149,24 +121,53 @@ async def async_setup_entry(hass, config_entry, async_add_entities):
           suggested_object_id="technicolor_lan_ports"),
     ])
 
-    async_add_entities(sensors, update_before_add=True)
+    for sensor in sensors:
+        sensor._poller = poller
 
-    # ✅ EIN Update-Loop für alle Sensoren (keine doppelten Timer)
+    dhcp_keys = set()
+
+    async def _add_dhcp_sensors():
+        # Discover keys again after recovery if DHCP was unavailable at setup.
+        new_sensors = []
+        for key in sorted((poller.data.get("dhcp") or {}).keys()):
+            if key in dhcp_keys:
+                continue
+            sensor = TechnicolorCGADHCPSensor(
+                technicolor, hass, config_entry.entry_id, host,
+                f"CGA DHCP {key}", key,
+                unique_suffix=f"dhcp_{key.lower()}",
+                suggested_object_id=f"technicolor_dhcp_{key.lower()}",
+            )
+            sensor._poller = poller
+            await sensor.async_update()
+            dhcp_keys.add(key)
+            new_sensors.append(sensor)
+        sensors.extend(new_sensors)
+        return new_sensors
+
+    await _add_dhcp_sensors()
+    for sensor in sensors:
+        await sensor.async_update()
+    async_add_entities(sensors, update_before_add=False)
+
     async def _update_all(_now):
-        for s in sensors:
-            try:
-                await s.async_update()
-            finally:
-                s.async_write_ha_state()
+        if not await poller.async_refresh():
+            return
+        # Publish synchronously between awaits that do no I/O, so a new round
+        # cannot replace the snapshot while it is being applied.
+        existing = list(sensors)
+        new_sensors = await _add_dhcp_sensors()
+        for sensor in existing:
+            await sensor.async_update()
+            sensor.async_write_ha_state()
+        if new_sensors:
+            async_add_entities(new_sensors, update_before_add=False)
 
+    def _start_polling():
+        entry_store["unsub"] = async_track_time_interval(hass, _update_all, scan_interval)
 
-    # ✅ Timer starten und "unsubscribe" speichern (damit unload/reload sauber ist)
-    unsub = async_track_time_interval(hass, _update_all, scan_interval)
-
-    # Wichtig: unsub im hass.data speichern, damit __init__.py es beim unload entfernen kann    
-    entry_store = hass.data.setdefault(DOMAIN, {}).setdefault(config_entry.entry_id, {})
-    if isinstance(entry_store, dict):
-        entry_store["unsub"] = unsub
+    entry_store["start_polling"] = _start_polling
+    _start_polling()
 
 
 
@@ -239,8 +240,19 @@ class TechnicolorCGABaseSensor(SensorEntity):
         return info
 
     async def async_update(self):
-        """Fetch new state data for the sensor."""
-        raise NotImplementedError("Subclasses must implement async_update")
+        """Apply the shared snapshot; entity updates never query the router."""
+        data = self._poller.data.get(self._data_group)
+        self._attr_available = False
+        if data is None:
+            return
+        try:
+            self._apply_data(data)
+            self._attr_available = True
+        except Exception as err:
+            _LOGGER.error("Invalid data for %s: %s", self.name, err)
+
+    def _apply_data(self, data):
+        raise NotImplementedError
 
 
 class TechnicolorCGASystemSensor(TechnicolorCGABaseSensor):
@@ -262,12 +274,10 @@ class TechnicolorCGASystemSensor(TechnicolorCGABaseSensor):
         )
         self._attributes = {k: v for k, v in system_data.items() if k != "CMStatus"}
 
-    async def async_update(self):
-        try:
-            system_data = await self.hass.async_add_executor_job(self.technicolor_cga.system)
-            self._apply_system_data(system_data)
-        except Exception as e:
-            _LOGGER.error(f"Error updating {self.name}: {e}")
+    _data_group = 'system'
+
+    def _apply_data(self, system_data):
+        self._apply_system_data(system_data)
 
 
 class TechnicolorCGADHCPSensor(TechnicolorCGABaseSensor):
@@ -279,12 +289,10 @@ class TechnicolorCGADHCPSensor(TechnicolorCGABaseSensor):
         self._attribute = attribute        
         self._attr_entity_category = EntityCategory.DIAGNOSTIC        
 
-    async def async_update(self):
-        try:
-            dhcp_data = await self.hass.async_add_executor_job(self.technicolor_cga.dhcp)
-            self._state = dhcp_data.get(self._attribute, "Unknown")
-        except Exception as e:
-            _LOGGER.error(f"Error updating {self.name}: {e}")
+    _data_group = 'dhcp'
+
+    def _apply_data(self, dhcp_data):
+        self._state = dhcp_data.get(self._attribute, "Unknown")
 
 
 class TechnicolorCGAHostSensor(TechnicolorCGABaseSensor):
@@ -293,13 +301,11 @@ class TechnicolorCGAHostSensor(TechnicolorCGABaseSensor):
     def __init__(self, technicolor_cga, hass, config_entry_id, host, name, **kwargs):
         super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)        
 
-    async def async_update(self):
-        try:
-            host_data = await self.hass.async_add_executor_job(self.technicolor_cga.aDev)
-            self._state = len(host_data.get("hostTbl", []))
-            self._attributes = host_data
-        except Exception as e:
-            _LOGGER.error(f"Error updating {self.name}: {e}")
+    _data_group = 'hosts'
+
+    def _apply_data(self, host_data):
+        self._state = len(host_data.get("hostTbl", []))
+        self._attributes = host_data
 
 
 class TechnicolorCGAHostDeltaSensor(TechnicolorCGABaseSensor):
@@ -339,45 +345,39 @@ class TechnicolorCGAHostDeltaSensor(TechnicolorCGABaseSensor):
         except ValueError:
             return (999, 999, 999, 999)
 
-    async def async_update(self):
-        """Fetch new state data for the sensor."""
-        _LOGGER.debug("Updating %s sensor", self._attr_name)
-        try:
-            host_data = await self.hass.async_add_executor_job(self.technicolor_cga.aDev)
-            current_devices = {
-                host["physaddress"]: {
-                    "ip": host.get("ipaddress", "Unknown"),
-                    "hostname": host.get("hostname", "Unknown"),
-                    "active": host.get("active", "false"),
-                }
-                for host in host_data.get("hostTbl", [])
+    _data_group = 'hosts'
+
+    def _apply_data(self, host_data):
+        current_devices = {
+            host["physaddress"]: {
+                "ip": host.get("ipaddress", "Unknown"),
+                "hostname": host.get("hostname", "Unknown"),
+                "active": host.get("active", "false"),
             }
-
-            for mac, details in current_devices.items():
-                self._known_devices[mac] = details
-
-            self._missing_devices = []
-            for mac, details in self._known_devices.items():
-                if mac not in current_devices:
-                    self._missing_devices.append(
-                        {
-                            "mac": mac,
-                            "last_ip": details["ip"],
-                            "hostname": details["hostname"],
-                            "status": "missing",
-                        }
-                    )
-                elif current_devices[mac]["active"] == "false":
-                    self._missing_devices.append(
-                        {
-                            "mac": mac,
-                            "last_ip": current_devices[mac]["ip"],
-                            "hostname": current_devices[mac]["hostname"],
-                            "status": "inactive",
-                        }
-                    )
-        except Exception as e:
-            _LOGGER.error("Error updating %s sensor: %s", self._attr_name, e)
+            for host in host_data.get("hostTbl", [])
+        }
+        for mac, details in current_devices.items():
+            self._known_devices[mac] = details
+        self._missing_devices = []
+        for mac, details in self._known_devices.items():
+            if mac not in current_devices:
+                self._missing_devices.append(
+                    {
+                        "mac": mac,
+                        "last_ip": details["ip"],
+                        "hostname": details["hostname"],
+                        "status": "missing",
+                    }
+                )
+            elif current_devices[mac]["active"] == "false":
+                self._missing_devices.append(
+                    {
+                        "mac": mac,
+                        "last_ip": current_devices[mac]["ip"],
+                        "hostname": current_devices[mac]["hostname"],
+                        "status": "inactive",
+                    }
+                )
 
 
 class TechnicolorCGALevelsSensor(TechnicolorCGABaseSensor):
@@ -385,9 +385,8 @@ class TechnicolorCGALevelsSensor(TechnicolorCGABaseSensor):
 
     ``levels()`` returns the SC-QAM downstream/upstream tables (``DSTbl`` /
     ``USTbl``), the OFDM/OFDMA tables (``exDSTbl`` / ``exUSTbl``) and the
-    per-downstream-channel error counters (``ErrTbl``). The API layer caches
-    the result briefly so the sensors sharing one update cycle only cause a
-    single request to the (single-session) modem.
+    per-downstream-channel error counters (``ErrTbl``). All sensors consume
+    the same snapshot fetched by the central poller.
     """
 
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -404,16 +403,10 @@ class TechnicolorCGALevelsSensor(TechnicolorCGABaseSensor):
     def _upstream_rows(levels):
         return (levels.get("USTbl") or []) + (levels.get("exUSTbl") or [])
 
-    async def async_update(self):
-        try:
-            levels = await self.hass.async_add_executor_job(self.technicolor_cga.levels)
-            if not isinstance(levels, dict) or not levels:
-                raise ValueError("Missing or invalid DOCSIS data")
-            self._apply_levels(levels)
-            self._attr_available = True
-        except Exception as e:
-            self._attr_available = False
-            _LOGGER.error("Error updating %s sensor: %s", self.name, e)
+    _data_group = 'levels'
+
+    def _apply_data(self, levels):
+        self._apply_levels(levels)
 
     def _apply_levels(self, levels):
         raise NotImplementedError
@@ -588,23 +581,17 @@ class TechnicolorCGAInterfacesSensor(TechnicolorCGABaseSensor):
 
     ``interfaces()`` returns per-interface counters for the WAN uplink
     (``WANStats``), the physical LAN ports (``LANEtherTable``) and the WiFi
-    radios. The API layer caches the result briefly so the WAN/LAN sensors
-    sharing one update cycle only cause a single request.
+    radios. All sensors consume the same snapshot fetched by the central
+    poller.
     """
 
     def __init__(self, technicolor_cga, hass, config_entry_id, host, name, **kwargs):
         super().__init__(technicolor_cga, hass, config_entry_id, host, name, **kwargs)
 
-    async def async_update(self):
-        try:
-            data = await self.hass.async_add_executor_job(self.technicolor_cga.interfaces)
-            if not isinstance(data, dict) or not data:
-                raise ValueError("Missing or invalid interface data")
-            self._apply_interfaces(data)
-            self._attr_available = True
-        except Exception as e:
-            self._attr_available = False
-            _LOGGER.error("Error updating %s sensor: %s", self.name, e)
+    _data_group = 'interfaces'
+
+    def _apply_data(self, data):
+        self._apply_interfaces(data)
 
     def _apply_interfaces(self, data):
         raise NotImplementedError

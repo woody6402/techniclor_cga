@@ -8,7 +8,11 @@
           "username": "Benutzername",
           "password": "Passwort",
           "host": "Router-IP",
-          "scan_interval": "Abfrageintervall (Sekunden)"
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "force_logout": "Bestehende Router-Sitzung übernehmen"
+        },
+        "data_description": {
+          "force_logout": "Wenn aktiviert, darf Home Assistant eine belegte Router-Sitzung beenden. Eine aktive Browser-Sitzung wird dabei abgemeldet. Deaktiviert wartet Home Assistant auf freien Zugang."
         }
       }
     }
@@ -20,10 +24,13 @@
         "data": {
           "host": "Router-IP",
           "password": "Passwort",
-          "scan_interval": "Abfrageintervall (Sekunden)"
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "force_logout": "Bestehende Router-Sitzung übernehmen"
+        },
+        "data_description": {
+          "force_logout": "Wenn aktiviert, darf Home Assistant eine belegte Router-Sitzung beenden. Eine aktive Browser-Sitzung wird dabei abgemeldet. Deaktiviert wartet Home Assistant auf freien Zugang."
         }
       }
     }
   }
 }
-

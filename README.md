@@ -139,9 +139,19 @@ python3 -m unittest discover -s tests -v
 These tests use a minimal Home Assistant stand-in. An HAOS runtime test is still
 needed, especially for unload/reload and a router session expiring.
 
-Login never requests a forced logout: both login POSTs explicitly use
+By default, login never requests a forced logout: both login POSTs use
 `logout=false`. If the router does not grant a complete challenge (for example,
 because a browser session is active), HA leaves the existing session alone.
 Initial setup retries through `ConfigEntryNotReady`; an established integration
 retries at the next polling interval. The router decides when the session is
 available again; closing a browser tab may not release it immediately.
+
+### Optional session takeover
+
+The setup and options dialogs expose **Take over an existing router session**
+(`force_logout`, default `false`, also for existing installations).
+When off, HA waits for access without evicting an existing browser session.
+When on, an explicit `MSG_LOGIN_150` response permits one additional salt request
+with `logout=true`. This may log out a browser. Other failures never trigger
+forced logout, and a failed takeover is not retried within that login attempt.
+Saving options reloads the integration so the new policy takes effect.

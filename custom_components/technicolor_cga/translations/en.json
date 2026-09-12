@@ -8,7 +8,11 @@
           "username": "Username",
           "password": "Password",
           "host": "Router IP",
-          "scan_interval": "Scan interval (seconds)"
+          "scan_interval": "Scan interval (seconds)",
+          "force_logout": "Take over an existing router session"
+        },
+        "data_description": {
+          "force_logout": "When enabled, Home Assistant may end an occupied router session, logging out an active browser session. When disabled, Home Assistant waits for access."
         }
       }
     }
@@ -20,10 +24,13 @@
         "data": {
           "host": "Router IP",
           "password": "Password",
-          "scan_interval": "Scan interval (seconds)"
+          "scan_interval": "Scan interval (seconds)",
+          "force_logout": "Take over an existing router session"
+        },
+        "data_description": {
+          "force_logout": "When enabled, Home Assistant may end an occupied router session, logging out an active browser session. When disabled, Home Assistant waits for access."
         }
       }
     }
   }
 }
-

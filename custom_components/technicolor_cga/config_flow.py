@@ -1,7 +1,7 @@
 import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_HOST, CONF_SCAN_INTERVAL
-from .const import DOMAIN
+from .const import DOMAIN, CONF_FORCE_LOGOUT
 
 DEFAULT_SCAN_SECONDS = 300
 
@@ -19,6 +19,7 @@ class TechnicolorCGAConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 step_id="user",
                 data_schema=vol.Schema(
                     {
+                        vol.Optional(CONF_FORCE_LOGOUT, default=False): bool,
                         vol.Required(CONF_USERNAME): str,
                         vol.Required(CONF_PASSWORD): str,
                         vol.Required(CONF_HOST, default="192.168.0.1"): str,
@@ -36,6 +37,7 @@ class TechnicolorCGAConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             CONF_HOST: user_input[CONF_HOST],
         }
         options = {
+            CONF_FORCE_LOGOUT: user_input.get(CONF_FORCE_LOGOUT, False),
             CONF_SCAN_INTERVAL: user_input[CONF_SCAN_INTERVAL],
         }
 
@@ -70,6 +72,10 @@ class TechnicolorCGAOptionsFlow(config_entries.OptionsFlow):
                 step_id="init",
                 data_schema=vol.Schema(
                     {
+                        vol.Optional(
+                            CONF_FORCE_LOGOUT,
+                            default=self._config_entry.options.get(CONF_FORCE_LOGOUT, False),
+                        ): bool,
                         vol.Required(CONF_HOST, default=current_host): str,
                         vol.Required(CONF_PASSWORD, default=current_password): str,
                         vol.Required(
@@ -86,6 +92,7 @@ class TechnicolorCGAOptionsFlow(config_entries.OptionsFlow):
 
         # options updaten (Scan + Host + Password)
         new_options = dict(self._config_entry.options)
+        new_options[CONF_FORCE_LOGOUT] = user_input.get(CONF_FORCE_LOGOUT, False)
         new_options[CONF_SCAN_INTERVAL] = user_input[CONF_SCAN_INTERVAL]
         new_options[CONF_HOST] = user_input[CONF_HOST]
         new_options[CONF_PASSWORD] = user_input[CONF_PASSWORD]

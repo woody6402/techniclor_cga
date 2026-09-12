@@ -1,7 +1,6 @@
 """One serial router fetch per data group, shared by all sensor entities."""
 
 import asyncio
-from functools import partial
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -21,8 +20,8 @@ class RouterPoller:
             ("system", api.system),
             ("dhcp", api.dhcp),
             ("hosts", api.aDev),
-            ("levels", partial(api.levels, max_age=0)),
-            ("interfaces", partial(api.interfaces, max_age=0)),
+            ("levels", api.levels),
+            ("interfaces", api.interfaces),
         )
 
     async def async_refresh(self):

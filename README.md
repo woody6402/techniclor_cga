@@ -49,8 +49,7 @@ v0.9.1: is installable over HACS custom repo
 
 ### DOCSIS RF sensors
 Derived from the modem's `levels()` tables (`DSTbl`/`USTbl`, the OFDM/OFDMA
-`exDSTbl`/`exUSTbl`, and the `ErrTbl` error counters). One shared, briefly
-cached fetch feeds all of them.
+`exDSTbl`/`exUSTbl`, and the `ErrTbl` error counters). One shared fetch per polling round feeds all of them.
 
 - **Downstream Power** — average receive power across all downstream channels (`dBmV`); attributes: `min_dbmv`, `max_dbmv`, `channel_count`, and a per-channel breakdown.
 - **Downstream SNR** — worst-case (minimum) SNR across downstream channels (`dB`); attributes: `min_db`, `max_db`, `avg_db`.
@@ -61,7 +60,7 @@ cached fetch feeds all of them.
 
 ### WAN / LAN interface sensors
 Derived from `dig_interface()` (WAN uplink, physical LAN ports and WiFi radios).
-One shared, briefly cached fetch feeds all of them.
+One shared fetch per polling round feeds all of them.
 
 - **WAN Status** — WAN link state (`Up`/`Down`); attributes carry link speed, duplex and all WAN counters.
 - **WAN Packets Received / Sent** — cumulative packet counters (`total_increasing`).
@@ -116,7 +115,7 @@ All sensor groups share one serial refresh every configured scan interval
 (default: 300 seconds). Each successful round fetches system, DHCP, hosts,
 DOCSIS levels and WAN/LAN interfaces once. Initial entity setup uses that same
 snapshot; individual entity updates only reapply the latest snapshot.
-The short API caches are bypassed for these scheduled group fetches.
+The API has no time-based cache; sensors share the snapshot from each round.
 Authentication can still require additional HTTP requests.
 
 A failed or invalid group response ends the round. Sensors in that group and

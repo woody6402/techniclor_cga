@@ -119,6 +119,18 @@ class LoginTests(unittest.TestCase):
             self.api.login()
         self.assertEqual(self.api.session.post.call_count, 2)
 
+    def test_levels_and_interfaces_always_fetch_fresh_data(self):
+        for name in ('levels', 'interfaces'):
+            self.api.session.get.reset_mock()
+            self.api.session.get.side_effect = [
+                response({'data': {'counter': 1}}),
+                response({'data': {'counter': 2}}),
+            ]
+            fetch = getattr(self.api, name)
+            self.assertEqual(fetch(), {'counter': 1})
+            self.assertEqual(fetch(), {'counter': 2})
+            self.assertEqual(self.api.session.get.call_count, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

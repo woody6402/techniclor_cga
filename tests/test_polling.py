@@ -80,8 +80,8 @@ class PollingTests(unittest.IsolatedAsyncioTestCase):
         await self.poller.async_refresh()
         for fn in vars(self.api).values():
             self.assertEqual(fn.call_count, 1)
-        self.api.levels.assert_called_once_with(max_age=0)
-        self.api.interfaces.assert_called_once_with(max_age=0)
+        self.api.levels.assert_called_once_with()
+        self.api.interfaces.assert_called_once_with()
         self.api.dhcp.side_effect = TimeoutError('offline')
         await self.poller.async_refresh()
         self.assertEqual(set(self.poller.data), {'system'})

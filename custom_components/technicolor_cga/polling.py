@@ -23,7 +23,6 @@ import asyncio
 from datetime import datetime, timezone
 
 import requests
-from functools import partial
 import logging
 
 _LOGGER = logging.getLogger(__name__)
@@ -60,14 +59,14 @@ class RouterPoller:
         self._idle.set()
         # Calls are deliberately serial because they share one router session.
         # DHCP feeds all DHCP sensors, Hosts feeds both device sensors, and so on.
-        # max_age=0 bypasses the short API caches to fetch fresh data each round.
+        # API methods fetch fresh data; sharing happens through this snapshot.
         # WiFi is last so its failure cannot prevent earlier groups from loading.
         self._groups = (
             ("system", api.system),
             ("dhcp", api.dhcp),
             ("hosts", api.aDev),
-            ("levels", partial(api.levels, max_age=0)),
-            ("interfaces", partial(api.interfaces, max_age=0)),
+            ("levels", api.levels),
+            ("interfaces", api.interfaces),
             ("wifi", api.wifi),
         )
 

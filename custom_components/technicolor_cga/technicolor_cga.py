@@ -22,14 +22,6 @@ class TechnicolorCGA:
 
         self.logged = False
 
-        # short-lived cache for the DOCSIS levels() tables so that several
-        # sensors sharing one update cycle only trigger a single HTTP request
-        # (the modem only allows one session at a time).
-        self._levels_cache = None
-        self._levels_ts = 0.0
-        self._iface_cache = None
-        self._iface_ts = 0.0
-
         self.session = requests.Session()
         self.session.headers.update({"User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/105.0.0.0 Safari/537.36"})
         self.session.headers.update({"X-Requested-With": "XMLHttpRequest"})
@@ -152,12 +144,8 @@ class TechnicolorCGA:
         endpoint = self.endpoint("system", options)
         return self.call(endpoint)
 
-    def levels(self, max_age=10):
-        # Reuse a recent result so the several DOCSIS sensors that run in the
-        # same update pass don't each hit the modem separately.
-        if self._levels_cache is not None and (time.time() - self._levels_ts) < max_age:
-            return self._levels_cache
-
+    def levels(self):
+        """Fetch fresh DOCSIS tables; the poller shares them across sensors."""
         options = [
             "exUSTbl",
             "exDSTbl",
@@ -167,22 +155,12 @@ class TechnicolorCGA:
         ]
 
         endpoint = self.endpoint("modem", options)
-        data = self.call(endpoint)
-        self._levels_cache = data
-        self._levels_ts = time.time()
-        return data
+        return self.call(endpoint)
 
-    def interfaces(self, max_age=10):
-        # WAN/LAN/WiFi interface statistics (dig_interface). Cached like
-        # levels() so the WAN/LAN sensors share one request per update pass.
-        if self._iface_cache is not None and (time.time() - self._iface_ts) < max_age:
-            return self._iface_cache
-
+    def interfaces(self):
+        """Fetch fresh interface statistics once per central polling round."""
         endpoint = self.endpoint("dig_interface", [])
-        data = self.call(endpoint)
-        self._iface_cache = data
-        self._iface_ts = time.time()
-        return data
+        return self.call(endpoint)
 
     def wifi(self):
         """Fetch both radios; this endpoint has one envelope per radio."""

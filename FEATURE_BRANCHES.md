@@ -61,3 +61,11 @@ If a lower package changes, its dependent branches must be updated deliberately;
 branches do not follow each other automatically. No force-push is needed for
 this initial split. No new PR, merge into main, or prerelease is created by this
 packaging step. Those remain subject to explicit approval.
+
+## Session policy option
+
+`feature/session-policy-option` builds on the aggregate `centralized-polling`
+at `a1a1e3c`. It makes session takeover configurable (off by default), including
+setup/options UI, translations and tests. It depends on the session-respect
+login implementation; this branch retains the aggregate's other features.
+The option is not yet incorporated into the aggregate branch.

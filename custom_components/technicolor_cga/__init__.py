@@ -5,7 +5,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.const import CONF_USERNAME, CONF_PASSWORD, CONF_HOST
 from homeassistant.exceptions import ConfigEntryNotReady
 
-from .const import DOMAIN
+from .const import DOMAIN, CONF_FORCE_LOGOUT
 from .technicolor_cga import TechnicolorCGA
 
 _LOGGER = logging.getLogger(__name__)
@@ -26,7 +26,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     _LOGGER.debug("Setting up Technicolor CGA with router %s", router)
 
     try:
-        api = TechnicolorCGA(username, password, router)
+        api = TechnicolorCGA(
+            username, password, router,
+            force_logout=entry.options.get(CONF_FORCE_LOGOUT, False),
+        )
         await hass.async_add_executor_job(api.login)
     except Exception as err:
         # The modem allows a single session and can briefly refuse a login

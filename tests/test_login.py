@@ -94,6 +94,31 @@ class LoginTests(unittest.TestCase):
                 self.api.wifi()
         self.api.login.assert_not_called()
 
+    def test_opt_in_takes_over_busy_session_once(self):
+        self.api.force_logout = True
+        self.api.session.post.side_effect = [
+            response({'message': 'MSG_LOGIN_150'}),
+            response({'salt': 'a', 'saltwebui': 'b'}), response({'error': 'ok'}),
+        ]
+        self.assertTrue(self.api.login())
+        self.assertEqual([c.kwargs['data']['logout'] for c in self.api.session.post.call_args_list],
+                         ['false', 'true', 'false'])
+
+    def test_opt_in_does_not_force_logout_for_unrelated_errors(self):
+        self.api.force_logout = True
+        self.api.session.post.return_value = response({'error': 'other error'})
+        with self.assertRaises(api_module.RouterLoginError):
+            self.api.login()
+        self.assertEqual(self.api.session.post.call_count, 1)
+        self.assertEqual(self.api.session.post.call_args.kwargs['data']['logout'], 'false')
+
+    def test_opt_in_busy_retry_is_bounded(self):
+        self.api.force_logout = True
+        self.api.session.post.return_value = response({'message': 'MSG_LOGIN_150'})
+        with self.assertRaises(api_module.RouterSessionBusy):
+            self.api.login()
+        self.assertEqual(self.api.session.post.call_count, 2)
+
 
 if __name__ == '__main__':
     unittest.main()

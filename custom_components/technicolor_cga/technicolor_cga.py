@@ -14,10 +14,11 @@ class RouterSessionBusy(RouterLoginError):
 
 
 class TechnicolorCGA:
-    def __init__(self, username, password, router="192.168.0.1"):
+    def __init__(self, username, password, router="192.168.0.1", *, force_logout=False):
         self.server = f"http://{router}"
         self.username = username
         self.password = password
+        self.force_logout = force_logout
 
         self.logged = False
 
@@ -62,11 +63,11 @@ class TechnicolorCGA:
 
         return hashlib.pbkdf2_hmac('sha256', bpass, bsalt, 1000).hex()[:32]
 
-    def _request_salt(self):
+    def _request_salt(self, *, logout=False):
         data = {
             "username": self.username,
             "password": "seeksalthash",
-            "logout": "false",
+            "logout": "true" if logout else "false",
         }
         endpoint = self.endpoint("session", ["login"])
         return self.session.post(endpoint, data=data, timeout=REQUEST_TIMEOUT).json()
@@ -79,9 +80,15 @@ class TechnicolorCGA:
         self.session.get(self.endpoint("session", ["menu"]), timeout=REQUEST_TIMEOUT)
 
         response = self._request_salt()
+        if (
+            self.force_logout
+            and "MSG_LOGIN_150" in (response.get("message"), response.get("error"), response.get("code"))
+        ):
+            # Explicit opt-in: take over an occupied session once, never loop.
+            response = self._request_salt(logout=True)
         if not response.get("salt") or not response.get("saltwebui"):
-            # Never evict a browser (or another client) on this single-session
-            # router. Setup/polling will retry later when access is available.
+            # No usable challenge: setup/polling will retry later. Other errors
+            # must not trigger an unsolicited session takeover.
             error_type = (
                 RouterSessionBusy
                 if "MSG_LOGIN_150" in (response.get("message"), response.get("error"), response.get("code"))
@@ -89,7 +96,8 @@ class TechnicolorCGA:
             )
             raise error_type(
                 "Router did not grant a login challenge; session may be occupied. "
-                "Existing session left untouched; will retry later."
+                + ("Will retry later." if self.force_logout else
+                   "Existing session left untouched; will retry later.")
             )
 
         challenge = self.challenge(self.password, response["salt"])

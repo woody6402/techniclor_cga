@@ -1,4 +1,4 @@
-# Feature packages and review bases
+# Feature packages and historical review bases
 
 These branches preserve the existing commits and form a stack. Each package is
 reviewed against its listed base, **not against main**: comparing every branch
@@ -44,7 +44,7 @@ flowchart TD
   local integration branding requires Home Assistant 2026.3 or later. Its position
   at the end of this stack is historical, not a runtime dependency on WiFi.
 
-## Shared test state and publication
+## Shared test state and publication history
 
 `centralized-polling` remains the aggregate branch containing all packages.
 The older `local-integration` branch remains at `25fe2d3` (PR, sensor fixes and
@@ -59,8 +59,9 @@ git diff feature/session-respect...feature/poll-diagnostics
 
 If a lower package changes, its dependent branches must be updated deliberately;
 branches do not follow each other automatically. No force-push is needed for
-this initial split. No new PR, merge into main, or prerelease is created by this
-packaging step. Those remain subject to explicit approval.
+this initial split. The initial packaging step did not create a new PR, merge into main, or publish
+a prerelease. The subsequent 0.9.6b1 preparation selects the full aggregate for
+main; the maintainer creates the release manually.
 
 ## Combined browser-session package
 
@@ -75,3 +76,12 @@ session-respect commit `c1ee9ec` as their historical ancestor. They have not bee
 rewritten to incorporate the new option. Their original focused review ranges
 remain `c1ee9ec...b55ea9a`, `b55ea9a...950ebd3`, and `950ebd3...44e25a1`.
 The aggregate merges the updated session branch with those later features.
+
+## 0.9.6b1 preparation
+
+The historical package boundaries above are retained for focused reviews. Later
+updates include cache removal on `feature/centralized-polling` (`2a74f2f`) and
+its integration into the aggregate, plus English inline polling documentation.
+The aggregate also includes the session-policy option. Do not merge every
+historical feature branch separately to install the complete release: use the
+prepared main/aggregate tree. No tag or GitHub release is created by preparation.

@@ -1,181 +1,190 @@
+# Technicolor CGA for Home Assistant
 
-This project provides several **sensor entities** for a Technicolor CGA gateway in Home Assistant. It reads system and DHCP information, lists connected hosts, and offers a **delta sensor** to detect missing/inactive devices. Thanks to `device_info`, all entities are grouped under **one device** in Home Assistant's device and integrations registry.
+Custom integration for Technicolor CGA cable gateways. System, network, DOCSIS
+and Wi-Fi sensors are grouped under one device. Configuration is available in
+the Home Assistant UI; no YAML is required.
+
+**0.9.6b1 is a prerelease candidate.** The new combined polling and session
+handling still needs extended testing on real routers. Firmware-specific API
+behavior can differ between models and providers.
 
 ## Features
 
-- **System status** (e.g., `CMStatus`) including pass-through of additional system attributes
-- **DOCSIS RF sensors**: downstream/upstream power, downstream SNR, and corrected/uncorrectable codeword counters (from the `levels()` tables)
-- **WAN / LAN interface sensors**: WAN link status, WAN packet/byte/error counters, and a LAN-ports summary (from `dig_interface()`)
-- **DHCP sensors** for all DHCP keys returned by the gateway
-- **Host list** with the number of currently detected devices (`hostTbl`)
-- **Missing devices / Delta sensor**: shows devices that disappeared or are inactive
-- **Clean device grouping** via `device_info` (identifiers = `(DOMAIN, host)`, manufacturer, name, `configuration_url`); model/firmware are added when available
-- **Automatic polling** every 5 minutes
+| Area | Sensors and behavior |
+|---|---|
+| System | Router `CMStatus` (for example `OPERATIONAL`), hardware/firmware attributes and polling diagnostics |
+| DOCSIS | Downstream/upstream power, minimum downstream SNR, locked channel count, corrected/uncorrectable codewords |
+| WAN | Link status and received/sent packet, byte and error counters |
+| LAN | Number of active Ethernet ports, with port details and LAN statistics |
+| Wi-Fi | Separate 2.4 GHz and 5 GHz radio states with channel, bandwidth, SSID and security settings |
+| DHCP | A sensor for each returned DHCP field |
+| Hosts | Current host count and a list of missing/inactive previously observed devices |
+| Polling | Shared serial fetches, HTTP timeouts, failure diagnostics and recovery |
+| Sessions | Optional takeover of an occupied router session; disabled by default |
+| Branding | Bundled modem icon and logo; local branding requires HA 2026.3 or later |
 
-## Directory structure 
-```
-custom_components/technicolor_cga/
-├─ __init__.py
-├─ config_flow.py
-├─ manifest.json
-├─ const.py
-├─ technicolor_cga.py
-└─ sensor.py
-```
+## Installation and upgrade
 
-## Installation
-
-> The integration uses **Config Entries** (UI-based setup).
+The HACS metadata declares Home Assistant **2025.10.0** as the minimum version.
+The full combined prerelease has not been validated against every supported HA
+version. Local brand images are a separate HA 2026.3+ capability.
 
 ### HACS
-v0.9.1: is installable over HACS custom repo
+
+Add `https://github.com/woody6402/techniclor_cga` as a custom repository of type
+**Integration**, then download Technicolor CGA. To test this prerelease, select
+`0.9.6b1` once it has been published and prerelease versions are visible in HACS.
 
 ### Manual
-1. Copy this folder to `config/custom_components/technicolor_cga/`.
-2. **Restart** Home Assistant.
-3. Go to **Settings → Devices & Services → Add Integration** and pick *Technicolor CGA*.
-4. Enter your credentials:
-   - **Host** (e.g., `192.168.0.1`)
-   - **Username**
-   - **Password**
 
-## Created entities
+1. Back up the existing integration folder before upgrading.
+2. Copy the **entire** `custom_components/technicolor_cga/` directory into
+   `/config/custom_components/technicolor_cga/`. In particular, the central
+   poller needs the new `polling.py`; avoid mixing files from different versions.
+3. Restart **Home Assistant Core** to load changed Python code.
+4. For a new installation, open **Settings → Devices & services → Add integration**
+   and select **Technicolor CGA**. Existing configuration entries can be retained.
 
-### System sensor
-- **Name:** `Technicolor CGA System Status`
-- **State:** value of `CMStatus` (or `"Unknown"`)
-- **Attributes:** all other system fields (e.g., `ModelName`, `SoftwareVersion`, etc.).
-- **Device info:** `model`/`sw_version` are set from system data when present.
+The integration folder includes the API, sensor and polling modules, configuration
+flow, manifest, translations, and `brand/icon.png` / `brand/logo.png`.
+No additional release attachment is needed for a standard HACS installation.
 
-### DOCSIS RF sensors
-Derived from the modem's `levels()` tables (`DSTbl`/`USTbl`, the OFDM/OFDMA
-`exDSTbl`/`exUSTbl`, and the `ErrTbl` error counters). One shared fetch per polling round feeds all of them.
+## Configuration and browser sessions
 
-- **Downstream Power** — average receive power across all downstream channels (`dBmV`); attributes: `min_dbmv`, `max_dbmv`, `channel_count`, and a per-channel breakdown.
-- **Downstream SNR** — worst-case (minimum) SNR across downstream channels (`dB`); attributes: `min_db`, `max_db`, `avg_db`.
-- **Upstream Power** — average transmit power across upstream channels (`dBmV`); attributes: per-channel breakdown.
-- **Downstream Correcteds** — total corrected codewords (`total_increasing`, diagnostic).
-- **Downstream Uncorrectables** — total uncorrectable codewords (`total_increasing`, diagnostic). The key line-health metric — it should stay flat.
-- **DOCSIS Channels** — number of locked channels; attributes carry the raw `DSTbl`/`USTbl`/`exDSTbl`/`exUSTbl`/`ErrTbl` tables for drill-down.
+Enter the router host/IP, username and password. The polling interval defaults
+to **300 seconds**, with a configurable range of 10–86400 seconds. Options allow
+changing the host, password, interval and session policy. Saving options reloads
+the integration; changing Python files requires a Core restart.
 
-### WAN / LAN interface sensors
-Derived from `dig_interface()` (WAN uplink, physical LAN ports and WiFi radios).
-One shared fetch per polling round feeds all of them.
+**Take over an existing router session** (`force_logout`):
 
-- **WAN Status** — WAN link state (`Up`/`Down`); attributes carry link speed, duplex and all WAN counters.
-- **WAN Packets Received / Sent** — cumulative packet counters (`total_increasing`).
-- **WAN Bytes Received / Sent** — cumulative byte counters (`total_increasing`, `data_size`).
-- **WAN Errors Received / Sent** — cumulative error counters (`total_increasing`, diagnostic).
-- **LAN Ports** — number of LAN ports that are up; attributes carry the full per-port table (`LANEtherTable`) and `LANStats`.
+- **Off (default, including existing installations):** HA does not force another
+  session out. If login cannot proceed, HA waits and retries later.
+- **On:** an explicit `MSG_LOGIN_150` response permits one extra salt request with
+  `logout=true`. This can log out a browser. Other errors do not trigger takeover.
 
-> **Note:** the byte counters are 32-bit on this firmware and clamp at
-> `2147483647` (2³¹−1) instead of wrapping, so `WAN Bytes *` becomes
-> unreliable once the interface has passed ~2 GB since its last reset. The
-> packet and error counters do not have this limitation.
+Initial login failures are retried by Home Assistant via `ConfigEntryNotReady`.
+After setup, failures are retried on the next polling round. A browser tab being
+closed does not necessarily release its session; logout or session expiry may
+be required. The integration does not automatically log out after each round or
+when unloaded. This option does not guarantee simultaneous browser/HA access or
+resolve every firmware web-server problem.
 
-### DHCP sensors
-- **Name:** `Technicolor CGA DHCP <Key>` (for each key returned by `dhcp()`)
-- **State:** corresponding value from DHCP data (or `"Unknown"`).
+## How polling works
 
-### Host sensor
-- **Name:** `Technicolor CGA Host List`
-- **State:** number of entries in `hostTbl`.
-- **Attributes:** full host data structure (e.g., `hostTbl`, entries with `physaddress`, `ipaddress`, `hostname`, `active`).
-
-### Delta / Missing devices sensor
-- **Name:** `Technicolor CGA Missing Devices`
-- **State:** number of detected *missing* or *inactive* devices.
-- **Attributes:**
-  - `missing_devices`: list of dicts `{mac, last_ip, hostname, status}`
-  - `known_devices`: list of learned devices `{mac, last_ip, hostname}`
-- **Notes:**
-  - The `known_devices` list is **learned at runtime** (no persistence across restarts).
-  - Sorting is numeric by IP; invalid IPs are placed at the end.
-
-## Update interval
-
-By default every **5 minutes** (`SCAN_INTERVAL = 300s`).
-
-## Tips / Troubleshooting
-
-- Verify `Host`, `Username`, `Password` and that the web interface is reachable.
-- Some gateways return slightly different field names (`ModelName` vs. `Model`, `SoftwareVersion` vs. `SWVersion`/`FirmwareVersion`). The code handles common variants.
-- The delta sensor only learns devices after they have been seen at least once.
-
-## Development
-
-- Entities inherit from `SensorEntity` (the base class provides `device_info`).
-- **Unique IDs** are based on `config_entry_id` + entity name.
-- Polling via `async_track_time_interval`.
-- The API class `TechnicolorCGA` is called in the executor (`login`, `system`, `dhcp`, `aDev`).
-
-### Central polling (local feature branch)
-
-All sensor groups share one serial refresh every configured scan interval
-(default: 300 seconds). Each successful round fetches system, DHCP, hosts,
-DOCSIS levels, WAN/LAN interfaces and WiFi radios once. Initial entity setup uses that same
-snapshot; individual entity updates only reapply the latest snapshot.
-The API has no time-based cache; sensors share the snapshot from each round.
-Authentication can still require additional HTTP requests.
-
-A failed or invalid group response ends the round. Sensors in that group and
-all groups not yet fetched become unavailable; successfully fetched groups
-remain available. The next interval tries again. DHCP keys discovered after
-an initial failure are added without a reload.
-
-Overlapping rounds are skipped. Unloading stops the timer and waits for the
-current group call (including any login retry) to finish before releasing the
-integration. It starts no further groups. Python cannot forcibly interrupt an
-HTTP request already running in a worker thread; the HTTP timeouts still apply.
-No automatic router logout is performed.
-
-Local verification without Home Assistant or router access:
-
-```sh
-python3 -m unittest discover -s tests -v
+```text
+System → DHCP → Hosts → DOCSIS → WAN/LAN → Wi-Fi → update sensors
 ```
 
-These tests use a minimal Home Assistant stand-in. An HAOS runtime test is still
-needed, especially for unload/reload and a router session expiring.
+Each round fetches each group once, serially, including the initial setup round.
+All consumers share those results: for example, the two host sensors use one
+host response. Authentication can add HTTP requests. There is no time-based
+API cache; individual entity updates only reapply the shared snapshot.
 
-By default, login never requests a forced logout: both login POSTs use
-`logout=false`. If the router does not grant a complete challenge (for example,
-because a browser session is active), HA leaves the existing session alone.
-Initial setup retries through `ConfigEntryNotReady`; an established integration
-retries at the next polling interval. The router decides when the session is
-available again; closing a browser tab may not release it immediately.
+- Data is published at the end of the round. Startup waits for those fetches.
+- A failed or empty/invalid group response ends the round. That group and all
+  groups not yet fetched become unavailable; successfully fetched groups remain
+  usable. The next timer round tries again.
+- If one Wi-Fi radio returns an invalid envelope, the other radio may remain
+  available; diagnostics report the partial failure.
+- Overlapping rounds are skipped. Unload stops the timer and waits for the
+  current group call, including any login retry, without starting further groups.
+- HTTP requests use **5-second connect / 15-second read inactivity timeouts**.
+  These are not a total deadline for a group call or an entire polling round.
+  An already running HTTP request cannot be forcibly cancelled by the poller.
+- Missing individual fields inside otherwise valid responses are not all
+  validated separately. Some fields may show `Unknown` or no numeric value.
 
-The existing System sensor exposes polling diagnostics as attributes:
-`poll_status`, `last_attempt`, `last_success`, `failed_group`, and `poll_error`.
-Timestamps use UTC; `last_success` means a fully successful round. Diagnostics
-remain available as attributes when the System sensor itself is unavailable.
-`waiting_for_session` is only reported for the explicit `MSG_LOGIN_150` router
-code; an incomplete challenge otherwise reports `login_failed`. Error descriptions
-are fixed text and do not include response bodies or credentials. Before the
-initial login succeeds, only the integration setup status is available.
+### Polling diagnostics
 
-### WiFi radio sensors
+The existing **System** sensor exposes these attributes even when unavailable:
 
-`WiFi 2.4 GHz` (radio 1) and `WiFi 5 GHz` (radio 2) share one additional
-GET per refresh to `/api/v1/wifi/1,2/RadioEnable,...,RegulatoryDomain`.
-This mapping and the nested per-radio response format are based on the supplied
-CGA4233EU firmware response. States are `Enabled` or `Disabled`, based on
-`RadioEnable`; these indicate radio configuration, not Internet connectivity.
-Attributes preserve the reported field names and values for channel, bandwidth,
-standards, automatic channel selection, SSID, BSSID, SSID enable/visibility,
-security mode, encryption and regulatory domain. No password fields are requested.
+| Attribute | Meaning |
+|---|---|
+| `poll_status` | `not_started`, `updating`, `ok`, `waiting_for_session`, `login_failed`, `timeout`, `connection_error`, `invalid_response` or `error` |
+| `last_attempt` | Start of the latest round, in UTC |
+| `last_success` | Completion of the last fully successful fetch round, in UTC |
+| `failed_group` | Group that failed, or no value after a successful round |
+| `poll_error` | Sanitized description without credentials or raw response bodies |
 
-If only one radio fails, the other remains available and System polling diagnostics
-identify an incomplete WiFi response. WiFi is fetched last, so its failure does
-not discard the other groups already fetched. No traffic counters or client
-counts are provided by this endpoint.
+`waiting_for_session` requires an explicit `MSG_LOGIN_150` response. A missing
+challenge alone is reported as `login_failed`. Before initial login succeeds,
+entities are not yet created: consult the integration setup status and logs.
+Diagnostics and learned host history are kept in memory, not persisted.
 
-### Optional session takeover
+## Sensor details and limitations
 
-The setup and options dialogs expose **Take over an existing router session**
-(`force_logout`, default `false`, also for existing installations).
-When off, HA waits for access without evicting an existing browser session.
-When on, an explicit `MSG_LOGIN_150` response permits one additional salt request
-with `logout=true`. This may log out a browser. Other failures never trigger
-forced logout, and a failed takeover is not retried within that login attempt.
-Saving options reloads the integration so the new policy takes effect.
+### DOCSIS
+
+Downstream Power and Upstream Power show the average of parseable power values
+from **locked** channels (dBmV). Downstream SNR shows the **minimum** SNR among
+locked channels (dB). SC-QAM and OFDM/OFDMA tables are included where provided.
+Power attributes include minimum, maximum and per-channel details; raw channel
+rows remain visible even if excluded from aggregation. With no eligible values,
+there is no numeric measurement.
+
+DOCSIS Channels counts locked downstream **plus** upstream channels and exposes
+`DSTbl`, `USTbl`, `exDSTbl`, `exUSTbl` and `ErrTbl`. Correcteds and Uncorrectables
+sum the returned `ErrTbl` counters and use `total_increasing` for HA statistics.
+Router resets or channel changes can change counter totals; the returned tables
+determine which channels are included.
+
+### WAN and LAN
+
+WAN Status prefers `WANEthernet.Status`, falling back to `WANL3Interface.Status`.
+It reports a link state, **not an Internet connectivity test**. Attributes include
+L3 status, bitrate, duplex and counters. LAN Ports counts `Up` entries in
+`LANEtherTable`, with the table and `LANStats` exposed as attributes.
+
+WAN counters are cumulative and use `total_increasing`; byte counters use bytes
+and the data-size device class. Some firmware has been reported to clamp byte
+counters at **2,147,483,647** instead of wrapping. If a counter plateaus there,
+it cannot be used for reliable long-term traffic totals. Verify behavior on your
+own firmware; packet/error counters are separate values.
+
+### Wi-Fi
+
+The endpoint `/api/v1/wifi/1,2/RadioEnable,...,RegulatoryDomain` returns separate
+radio envelopes. Radio 1 maps to **WiFi 2.4 GHz**, radio 2 to **WiFi 5 GHz**, based
+on the supplied CGA4233EU response. `Enabled` / `Disabled` reflects `RadioEnable`,
+not reachability. Attributes preserve the reported channel, bandwidth, standards,
+auto-channel setting, SSID/BSSID, SSID enable/visibility, security mode, encryption
+and regulatory domain. This endpoint provides no client or traffic counters, and
+no Wi-Fi passwords are requested.
+
+### DHCP and hosts
+
+DHCP sensors are discovered from returned keys, including keys first seen after
+recovery from an initial failure. Hosts counts `hostTbl` entries; its attributes
+contain the returned host data. Missing/Inactive Hosts learns devices in memory
+and reports those absent or marked inactive, with `missing_devices` and
+`known_devices` attributes. History resets when the integration is reloaded.
+An inactive entry is not by itself proof of a device or network fault.
+
+Entity unique IDs use the configuration entry ID and stable sensor suffixes.
+Device grouping uses the integration domain and configuration entry ID.
+
+## Testing and troubleshooting
+
+PR #3's author reported live DOCSIS/WAN/LAN checks on a **CGA437**. The maintainer
+observed all 14 PR sensors on **CGA4233EU**, firmware
+**CGA4233EU-19.1.B39-022-E20-RMQS**, and supplied its Wi-Fi API response. These
+observations do not constitute a complete long-term validation of this prerelease.
+
+Local regression tests use simulated router responses and a minimal HA stand-in:
+
+```sh
+python3 -B -m unittest discover -s tests -v
+```
+
+They cover polling counts, overlap prevention, shutdown/cancellation, recovery,
+late DHCP discovery, Wi-Fi envelopes, session policy and diagnostic attributes.
+They do not replace a real HAOS test of setup/options, reload, session expiry and
+browser access. Router response fixtures are synthetic and contain no real credentials.
+
+When diagnosing a failure, check System polling attributes and the HA logs.
+If the browser is also affected, disable the integration and verify router HTTP
+access separately; a successful ping does not prove the web server is responding.
+Please report model, firmware, polling interval, session option and sanitized errors.
+
+Feature-branch history and review bases are documented in [FEATURE_BRANCHES.md](FEATURE_BRANCHES.md).

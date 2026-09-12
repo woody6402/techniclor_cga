@@ -10,7 +10,7 @@ to main would include all preceding packages. No history has been rewritten.
 | `feature/sensor-fixes` | `feature/pr3-base` | `db20489` | Locked-channel filtering, counter state classes, availability |
 | `feature/http-timeouts` | `feature/sensor-fixes` | `25fe2d3` | Connect/read timeouts for HTTP requests |
 | `feature/centralized-polling` | `feature/http-timeouts` | `1a115c5` | Shared snapshots, serialized polling, unload handling, tests |
-| `feature/session-respect` | `feature/centralized-polling` | `c1ee9ec` | Never force an existing router session out |
+| `feature/session-respect` | `feature/centralized-polling` | `c1ee9ec`, `fe635f9` | Respect existing sessions; optional explicit takeover |
 | `feature/poll-diagnostics` | `feature/session-respect` | `b55ea9a` | System attributes and typed login/session errors |
 | `feature/wifi-sensors` | `feature/poll-diagnostics` | `950ebd3` | One WiFi fetch, two radio sensors, partial-failure diagnostics |
 | `feature/modem-branding` | `feature/wifi-sensors` | `44e25a1` | Local icon and logo |
@@ -62,10 +62,16 @@ branches do not follow each other automatically. No force-push is needed for
 this initial split. No new PR, merge into main, or prerelease is created by this
 packaging step. Those remain subject to explicit approval.
 
-## Session policy option
+## Combined browser-session package
 
-`feature/session-policy-option` builds on the aggregate `centralized-polling`
-at `a1a1e3c`. It makes session takeover configurable (off by default), including
-setup/options UI, translations and tests. It depends on the session-respect
-login implementation; this branch retains the aggregate's other features.
-The option is not yet incorporated into the aggregate branch.
+`feature/session-respect` now contains both the default browser-session protection
+and the configurable takeover option (`force_logout`, off by default). Its added
+commit is `fe635f9`; compare it with `feature/centralized-polling` to review the
+whole browser-session package. The aggregate `centralized-polling` includes it.
+The temporary `feature/session-policy-option` is no longer a separate package.
+
+The existing diagnostics, WiFi and branding branches still use the original
+session-respect commit `c1ee9ec` as their historical ancestor. They have not been
+rewritten to incorporate the new option. Their original focused review ranges
+remain `c1ee9ec...b55ea9a`, `b55ea9a...950ebd3`, and `950ebd3...44e25a1`.
+The aggregate merges the updated session branch with those later features.

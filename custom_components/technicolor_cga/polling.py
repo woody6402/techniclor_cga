@@ -1,23 +1,22 @@
-"""Gemeinsame Router-Abfragen für alle Sensoren einer Integration.
+"""Shared router polling for all sensors in one integration.
 
-Zusammenspiel der Dateien:
-  __init__.py  meldet die API an und stoppt den Poller beim Entladen.
-  sensor.py    startet die erste Runde und den Timer (Standard: 300 Sekunden).
-  polling.py   holt die Daten seriell und hält den gemeinsamen Datensatz bereit.
-  sensor.py    verteilt danach die Daten: Entity-Updates machen selbst kein HTTP.
+How the modules work together:
+  __init__.py  logs in to the API and stops the poller during unload.
+  sensor.py    starts the first round and the timer (default: 300 seconds).
+  polling.py   fetches groups serially and stores their shared snapshot.
+  sensor.py    applies the snapshot; entity updates perform no HTTP requests.
 
-Eine Runde:
-  System -> DHCP -> Hosts -> DOCSIS -> WAN/LAN -> WLAN -> Sensoren aktualisieren
+One round:
+  System -> DHCP -> Hosts -> DOCSIS -> WAN/LAN -> WiFi -> update sensors
 
-Jede Datengruppe wird einmal aufgerufen, unabhängig von der Anzahl ihrer
-Sensoren. Ein Gruppenaufruf kann intern zusätzliche HTTP-Anfragen zur Anmeldung
-benötigen. Die API entscheidet anhand der Login-Option, ob eine belegte Sitzung
-übernommen werden darf; der Poller selbst meldet niemanden an oder ab.
+Each group is called once, regardless of how many sensors consume it. A group
+call may require additional HTTP requests for authentication. The API applies
+the configured session takeover policy; the poller does not log in or log out.
 
-Die Ergebnisse werden erst am Ende der Runde veröffentlicht, auch beim Setup.
-Bis dahin bleibt self.data der vorherige Datensatz. Es gibt keinen eigenen
-Timer in dieser Klasse und keine sofortige Wiederholung nach einem Fehler:
-Erst der nächste vom Sensor-Modul gestartete Durchlauf versucht es erneut.
+Results are published only at the end of a round, including during setup.
+Until then, self.data retains the previous snapshot. This class owns no timer
+and does not immediately retry a failed round: the next refresh triggered by
+the sensor module makes the next attempt.
 """
 
 import asyncio
@@ -31,20 +30,20 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class RouterPoller:
-    """Sammelt einen Datensatz pro Runde; Steuerung erfolgt im HA-Event-Loop.
+    """Collect one snapshot per round, with control running in the HA event loop.
 
-    Nur die synchronen API-Aufrufe laufen im Executor (Hintergrundthread).
-    Flags und Datensätze werden im Event-Loop geändert, nicht in diesen Threads.
+    Only synchronous API calls run in the executor (worker thread). Flags and
+    snapshots are modified in the event loop, not in those worker threads.
     """
 
     def __init__(self, hass, api):
         self.hass = hass
-        # Schlüssel entsprechen den Gruppen unten. Fehlender Schlüssel bedeutet:
-        # In der letzten veröffentlichten Runde gab es dafür keine gültigen Daten.
+        # Keys match the groups below. A missing key means that the last published
+        # round contained no valid data for that group.
         self.data = {}
-        # Der System-Sensor zeigt diese Werte auch bei unavailable als Attribute.
-        # last_success zählt vollständige Abrufrunden, nicht erfolgreiche Logins
-        # oder die spätere Auswertung jedes einzelnen Sensorfeldes. Zeiten: UTC.
+        # The System sensor exposes these attributes even while unavailable.
+        # last_success tracks complete fetch rounds, not logins or the subsequent
+        # validation of every individual sensor field. Timestamps are UTC.
         self.diagnostics = {
             "poll_status": "not_started",
             "last_attempt": None,
@@ -52,17 +51,17 @@ class RouterPoller:
             "failed_group": None,
             "poll_error": None,
         }
-        # _stopped: dauerhaft keine neuen Gruppen, bis resume() aufgerufen wird.
-        # _busy: eine Runde läuft; weitere Starts werden übersprungen, nicht queued.
-        # _idle: Entladen darf weitergehen, sobald die laufende Runde beendet ist.
+        # _stopped: no new groups until resume() is called.
+        # _busy: a round is running; additional starts are skipped, not queued.
+        # _idle: unload may proceed once the current round has finished.
         self._stopped = False
         self._busy = False
         self._idle = asyncio.Event()
         self._idle.set()
-        # Reihenfolge ist bewusst seriell: dieselbe Router-Session wird geteilt.
-        # DHCP versorgt alle DHCP-Sensoren, Hosts beide Geräte-Sensoren usw.
-        # max_age=0 umgeht die kurzen API-Caches: jede Runde holt frische Daten.
-        # WLAN steht zuletzt, damit sein Ausfall frühere Gruppen nicht verhindert.
+        # Calls are deliberately serial because they share one router session.
+        # DHCP feeds all DHCP sensors, Hosts feeds both device sensors, and so on.
+        # max_age=0 bypasses the short API caches to fetch fresh data each round.
+        # WiFi is last so its failure cannot prevent earlier groups from loading.
         self._groups = (
             ("system", api.system),
             ("dhcp", api.dhcp),
@@ -73,19 +72,19 @@ class RouterPoller:
         )
 
     async def async_refresh(self):
-        """Eine Runde abholen und den neuen (ggf. unvollständigen) Satz publizieren.
+        """Fetch a round and publish its new, possibly incomplete snapshot.
 
-        True: Ein Datensatz wurde veröffentlicht; Sensoren sollen ihn anwenden.
-              Das bedeutet NICHT, dass alle Gruppen erfolgreich waren.
-        False: Wegen laufender Runde oder Stop übersprungen/abgebrochen; keine
-               neuen Sensordaten veröffentlichen.
-        CancelledError: Abbruch durch den Aufrufer wird nach dem Abwarten des
-                        laufenden Executor-Aufrufs weitergereicht.
+        True: A snapshot was published and sensors should apply it. This does
+              NOT mean that every group succeeded.
+        False: Skipped or stopped because another round is running or shutdown
+               was requested; do not publish new sensor data.
+        CancelledError: Caller cancellation is propagated after the outstanding
+                        executor call has finished.
         """
         if self._stopped or self._busy:
             return False
-        # Prüfung und Setzen passieren ohne await: ein zweiter Event-Loop-Task
-        # kann nicht dazwischen eine weitere Runde starten.
+        # Check and set without an await: another event-loop task cannot start
+        # an overlapping round between these two operations.
         self._busy = True
         self._idle.clear()
         self.diagnostics.update(
@@ -94,20 +93,20 @@ class RouterPoller:
             failed_group=None,
             poll_error=None,
         )
-        # Lokal sammeln, damit Sensoren keinen halb aufgebauten Satz sehen.
+        # Collect locally so sensors cannot see a partially constructed snapshot.
         snapshot = {}
         try:
             for group, fetch in self._groups:
                 if self._stopped:
                     return False
-                # Genau ein Gruppenaufruf gleichzeitig. Die HTTP-Timeouts liegen
-                # in der API; ein Gruppenaufruf kann mehrere HTTP-Schritte haben.
+                # Only one group call runs at a time. HTTP timeouts are defined in the
+                # API; a single group call may involve multiple HTTP steps.
                 future = self.hass.async_add_executor_job(fetch)
                 try:
-                    # Task-Abbruch beendet keinen bereits laufenden requests-Thread.
-                    # shield verhindert das Canceln seines Future. Erst abwarten,
-                    # dann die Rundensperre lösen, damit ein Reload nicht parallel
-                    # zur alten Anfrage eine neue Session benutzt.
+                    # Cancelling a task cannot stop a requests thread already running.
+                    # shield protects its future from cancellation. Drain the call before
+                    # releasing the round guard so reload cannot use a new session while
+                    # the previous request is still running.
                     try:
                         data = await asyncio.shield(future)
                     except asyncio.CancelledError:
@@ -120,18 +119,18 @@ class RouterPoller:
                     if not isinstance(data, dict) or not data:
                         raise ValueError(f"Missing or invalid {group} data")
                     snapshot[group] = data
-                    # Sonderfall: Ein Radio darf fehlen, während das andere noch
-                    # Daten liefert. Beide Sensoren prüfen ihren Teil separat.
-                    # Die Runde gilt dabei nicht als vollständig erfolgreich.
+                    # Partial WiFi response: one radio may fail while the other has data.
+                    # Each sensor validates its own radio separately. Such a round does
+                    # not count as fully successful.
                     if group == "wifi" and any(data.get(key) is None for key in ("1", "2")):
                         self.diagnostics.update(
                             poll_status="invalid_response", failed_group="wifi",
                             poll_error="One or more WiFi radios returned no valid data",
                         )
                 except Exception as err:
-                    # Kein Wiederholen je Sensor und keine weiteren Gruppen in
-                    # dieser Runde. So erzeugt ein Login-/Verbindungsfehler keine
-                    # Kette weiterer Anmeldeversuche für alle Sensoren.
+                    # No retries per sensor and no further groups in this round. This
+                    # prevents a login/connection failure from causing a chain of login
+                    # attempts for all remaining sensors.
                     status, message = self._describe_error(err)
                     self.diagnostics.update(
                         poll_status=status, failed_group=group, poll_error=message,
@@ -140,10 +139,10 @@ class RouterPoller:
                     break
             if self._stopped:
                 return False
-            # Erst jetzt atomar den gemeinsamen Satz ersetzen. Beispiel: DHCP
-            # scheitert -> nur System ist enthalten; alle übrigen Gruppen fehlen
-            # und ihre Sensoren werden unavailable. Alte Werte werden nicht als
-            # frische Daten übernommen. sensor.py schreibt danach die HA-Zustände.
+            # Replace the shared snapshot only now. For example, if DHCP fails,
+            # only System is present; all remaining groups are missing and their
+            # sensors become unavailable. Never present old values as fresh data.
+            # sensor.py writes the resulting states to HA after this method returns.
             self.data = snapshot
             if len(snapshot) == len(self._groups) and self.diagnostics["poll_status"] == "updating":
                 self.diagnostics.update(
@@ -151,17 +150,18 @@ class RouterPoller:
                 )
             return True
         finally:
-            # Auch bei Fehler oder Stop den Wartenden in async_stop() freigeben.
+            # Release async_stop() waiters even when the round fails or is stopped.
             self._busy = False
             self._idle.set()
 
     @staticmethod
     def _describe_error(err):
-        """Fehler für die System-Attribute klassifizieren, ohne sensible Rohdaten.
+        """Classify errors for System attributes without exposing sensitive raw data.
 
-        waiting_for_session kommt von einer expliziten Routermeldung in der API;
-        eine bloß fehlende Challenge beweist keine belegte Browser-Sitzung.
-        Feste Texte verhindern Cookies/Token/Antwortinhalte in Attributen und Log.
+        waiting_for_session comes from an explicit router response in the API;
+        a missing challenge alone does not prove that a browser session is busy.
+        Fixed messages keep cookies, tokens and response bodies out of attributes
+        and logs.
         """
         status = getattr(err, "poll_status", None)
         if status == "waiting_for_session":
@@ -177,21 +177,21 @@ class RouterPoller:
         return "error", "Router refresh failed"
 
     async def async_stop(self):
-        """Nach Timer-Abmeldung beim Entladen aufgerufen.
+        """Called during unload after the timer has been unsubscribed.
 
-        Das Stop-Flag wird vor dem Warten gesetzt. Die gerade laufende Gruppe
-        darf noch fertig werden (inklusive eines möglichen Login-Retry), danach
-        wird keine weitere Gruppe gestartet und kein neuer Satz veröffentlicht.
-        Dies ist kein sofortiger HTTP-Abbruch und kein Router-Logout.
+        Set the stop flag before waiting. The current group call may finish,
+        including a possible login retry. No further group will start and no
+        new snapshot will be published. This neither immediately interrupts
+        HTTP requests nor logs out of the router.
         """
         self._stopped = True
         await self._idle.wait()
 
     def resume(self):
-        """Nur nach fehlgeschlagenem Entladen wieder freigeben.
+        """Allow polling again only after an unsuccessful unload.
 
-        __init__.py startet anschließend den Timer erneut. Reguläre HTTP-Fehler
-        brauchen kein resume(): nach ihnen läuft der vorhandene Timer weiter.
+        __init__.py then restarts the timer. Ordinary HTTP failures do not need
+        resume(): the existing timer continues running after those failures.
         """
         if self._busy:
             raise RuntimeError("Cannot resume a running poller")
